@@ -1,0 +1,103 @@
+version: "3.9"
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:4000
+    depends_on:
+      - backend
+    networks:
+      - metalnet
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "4000:4000"
+    environment:
+      - DATABASE_URL=postgresql://metaluser:metalpass@postgres:5432/metaldb
+      - N8N_WEBHOOK_URL=http://n8n:5678/webhook
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OLLAMA_URL=http://ollama:11434
+      - OCR_SERVICE_URL=http://paddleocr:8868
+      - UPLOAD_DIR=/app/uploads
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - metalnet
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5433:5432"
+    environment:
+      - POSTGRES_USER=metaluser
+      - POSTGRES_PASSWORD=metalpass
+      - POSTGRES_DB=metaldb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U metaluser -d metaldb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - metalnet
+    restart: unless-stopped
+
+  n8n:
+    image: n8nio/n8n:latest
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD:-metaln8n}
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=metaldb
+      - DB_POSTGRESDB_USER=metaluser
+      - DB_POSTGRESDB_PASSWORD=metalpass
+      - DB_POSTGRESDB_SCHEMA=n8n
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-changeme-in-production}
+      - WEBHOOK_URL=http://localhost:5678
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - metalnet
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - metalnet
+    restart: unless-stopped
+
+networks:
+  metalnet:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  n8n_data:
+  ollama_data:
+  uploads_data:
