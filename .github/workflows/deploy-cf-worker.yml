@@ -21,12 +21,18 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
         run: |
-          RESULT=$(curl -sf -X PUT \
+          echo "--- POST subdomains ---"
+          curl -s -X POST \
             "https://api.cloudflare.com/client/v4/accounts/a17931e8615574d21c0eef43a4a0ff33/workers/subdomains" \
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"subdomain":"metalpro-ai"}')
-          echo $RESULT | python3 -c "import sys,json; d=json.load(sys.stdin); print('Subdomain:', d.get('result',{}).get('subdomain','see errors'), '| success:', d.get('success'))"
+            -d '{"subdomain":"metalpro-ai"}'
+          echo ""
+          echo "--- GET subdomain ---"
+          curl -s \
+            "https://api.cloudflare.com/client/v4/accounts/a17931e8615574d21c0eef43a4a0ff33/workers/subdomain" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          echo ""
 
       - name: Install Wrangler
         run: npm install -g wrangler
@@ -42,8 +48,8 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
         run: |
-          SUBDOMAIN=$(curl -sf \
-            "https://api.cloudflare.com/client/v4/accounts/a17931e8615574d21c0eef43a4a0ff33/workers/subdomains" \
+          SUBDOMAIN=$(curl -s \
+            "https://api.cloudflare.com/client/v4/accounts/a17931e8615574d21c0eef43a4a0ff33/workers/subdomain" \
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["subdomain"])')
           URL="https://anthropic-proxy.${SUBDOMAIN}.workers.dev"
