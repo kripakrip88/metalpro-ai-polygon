@@ -1,0 +1,1412 @@
+From 9c81f48715f97c9563f8de8597f71b50d35f695d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 18 May 2026 16:54:07 +0000
+Subject: [PATCH] feat(crm): add Customer/Contact/Interaction models + Email
+ Copilot integration
+
+---
+ .../20260518000000_crm_models/migration.sql   |  89 +++++
+ prisma/schema.prisma                          |  99 +++++-
+ public/crm.html                               | 219 ++++++++++++
+ public/customer.html                          | 287 ++++++++++++++++
+ public/email-inbox.html                       | 325 ++++++++++++++++++
+ public/materials.html                         |   5 +-
+ public/orders.html                            |   5 +-
+ public/templates.html                         |   5 +-
+ server.js                                     |   1 +
+ src/routes/customers.js                       |  72 ++++
+ src/services/contactService.js                |  40 +++
+ src/services/customerService.js               |  66 ++++
+ src/services/interactionService.js            |  36 ++
+ 13 files changed, 1243 insertions(+), 6 deletions(-)
+ create mode 100644 prisma/migrations/20260518000000_crm_models/migration.sql
+ create mode 100644 public/crm.html
+ create mode 100644 public/customer.html
+ create mode 100644 public/email-inbox.html
+ create mode 100644 src/routes/customers.js
+ create mode 100644 src/services/contactService.js
+ create mode 100644 src/services/customerService.js
+ create mode 100644 src/services/interactionService.js
+
+diff --git a/prisma/migrations/20260518000000_crm_models/migration.sql b/prisma/migrations/20260518000000_crm_models/migration.sql
+new file mode 100644
+index 0000000..f852494
+--- /dev/null
++++ b/prisma/migrations/20260518000000_crm_models/migration.sql
+@@ -0,0 +1,89 @@
++-- CRM: Customer, Contact, Interaction models
++-- Migration: 20260518000000_crm_models
++
++CREATE TYPE "CustomerPriority" AS ENUM ('VIP', 'HIGH', 'NORMAL', 'LOW');
++CREATE TYPE "InteractionType" AS ENUM ('EMAIL', 'CALL', 'MEETING', 'NOTE');
++CREATE TYPE "InteractionDirection" AS ENUM ('INBOUND', 'OUTBOUND');
++
++-- Optional customerId on orders
++ALTER TABLE "orders" ADD COLUMN IF NOT EXISTS "customerId" TEXT;
++
++CREATE TABLE "crm_customers" (
++  "id"        TEXT NOT NULL,
++  "companyId" TEXT NOT NULL,
++  "name"      TEXT NOT NULL,
++  "inn"       TEXT,
++  "phone"     TEXT,
++  "email"     TEXT,
++  "website"   TEXT,
++  "notes"     TEXT,
++  "priority"  "CustomerPriority" NOT NULL DEFAULT 'NORMAL',
++  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
++  "updatedAt" TIMESTAMP(3) NOT NULL,
++  "deletedAt" TIMESTAMP(3),
++
++  CONSTRAINT "crm_customers_pkey" PRIMARY KEY ("id")
++);
++
++CREATE TABLE "crm_contacts" (
++  "id"         TEXT NOT NULL,
++  "customerId" TEXT NOT NULL,
++  "name"       TEXT NOT NULL,
++  "phone"      TEXT,
++  "email"      TEXT,
++  "position"   TEXT,
++  "notes"      TEXT,
++  "createdAt"  TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
++  "updatedAt"  TIMESTAMP(3) NOT NULL,
++
++  CONSTRAINT "crm_contacts_pkey" PRIMARY KEY ("id")
++);
++
++CREATE TABLE "crm_interactions" (
++  "id"             TEXT NOT NULL,
++  "customerId"     TEXT NOT NULL,
++  "contactId"      TEXT,
++  "orderId"        TEXT,
++  "type"           "InteractionType" NOT NULL,
++  "direction"      "InteractionDirection" NOT NULL,
++  "subject"        TEXT,
++  "body"           TEXT,
++  "emailMessageId" TEXT,
++  "createdAt"      TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
++  "createdById"    TEXT NOT NULL,
++
++  CONSTRAINT "crm_interactions_pkey" PRIMARY KEY ("id")
++);
++
++-- Foreign keys
++ALTER TABLE "orders"           ADD CONSTRAINT "orders_customerId_fkey"
++  FOREIGN KEY ("customerId") REFERENCES "crm_customers"("id") ON DELETE SET NULL ON UPDATE CASCADE;
++
++ALTER TABLE "crm_customers"    ADD CONSTRAINT "crm_customers_companyId_fkey"
++  FOREIGN KEY ("companyId") REFERENCES "companies"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
++
++ALTER TABLE "crm_contacts"     ADD CONSTRAINT "crm_contacts_customerId_fkey"
++  FOREIGN KEY ("customerId") REFERENCES "crm_customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
++
++ALTER TABLE "crm_interactions" ADD CONSTRAINT "crm_interactions_customerId_fkey"
++  FOREIGN KEY ("customerId") REFERENCES "crm_customers"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
++
++ALTER TABLE "crm_interactions" ADD CONSTRAINT "crm_interactions_contactId_fkey"
++  FOREIGN KEY ("contactId") REFERENCES "crm_contacts"("id") ON DELETE SET NULL ON UPDATE CASCADE;
++
++ALTER TABLE "crm_interactions" ADD CONSTRAINT "crm_interactions_orderId_fkey"
++  FOREIGN KEY ("orderId") REFERENCES "orders"("id") ON DELETE SET NULL ON UPDATE CASCADE;
++
++ALTER TABLE "crm_interactions" ADD CONSTRAINT "crm_interactions_createdById_fkey"
++  FOREIGN KEY ("createdById") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
++
++-- Indexes
++CREATE INDEX "crm_customers_companyId_idx"    ON "crm_customers"("companyId");
++CREATE INDEX "crm_customers_email_idx"        ON "crm_customers"("email");
++CREATE INDEX "crm_contacts_customerId_idx"    ON "crm_contacts"("customerId");
++CREATE INDEX "crm_contacts_email_idx"         ON "crm_contacts"("email");
++CREATE INDEX "crm_interactions_customerId_idx" ON "crm_interactions"("customerId");
++CREATE INDEX "crm_interactions_orderId_idx"   ON "crm_interactions"("orderId");
++CREATE UNIQUE INDEX "crm_interactions_emailMessageId_key" ON "crm_interactions"("emailMessageId")
++  WHERE "emailMessageId" IS NOT NULL;
++CREATE INDEX "orders_customerId_idx"          ON "orders"("customerId");
+diff --git a/prisma/schema.prisma b/prisma/schema.prisma
+index 0d60f11..bb08c90 100644
+--- a/prisma/schema.prisma
++++ b/prisma/schema.prisma
+@@ -205,6 +205,7 @@ model Company {
+   materialReservations MaterialReservation[]
+   inventoryBalances    InventoryBalance[]
+   productTemplates     ProductTemplate[]
++  customers            Customer[]
+ 
+   @@map("companies")
+ }
+@@ -225,9 +226,10 @@ model User {
+   deletedAt    DateTime?
+ 
+   company   Company         @relation(fields: [companyId], references: [id])
+-  orders    Order[]         @relation("CreatedByUser")
+-  revisions QuoteRevision[] @relation("RevisionCreatedBy")
+-  auditLogs AuditLog[]
++  orders               Order[]         @relation("CreatedByUser")
++  revisions            QuoteRevision[] @relation("RevisionCreatedBy")
++  auditLogs            AuditLog[]
++  interactionsCreated  Interaction[]   @relation("InteractionCreatedBy")
+ 
+   @@map("users")
+ }
+@@ -385,6 +387,7 @@ model Order {
+   id           String      @id @default(uuid())
+   companyId    String
+   createdById  String
++  customerId   String?
+   orderNumber  String
+   customerName String
+   title        String
+@@ -406,8 +409,11 @@ model Order {
+   activeQuoteRevision QuoteRevision?   @relation("ActiveQuoteRevision", fields: [activeQuoteRevisionId], references: [id], onDelete: SetNull)
+   files               OrderFile[]
+   materialReservations MaterialReservation[]
++  interactions         Interaction[]
++  customer             Customer?    @relation(fields: [customerId], references: [id])
+ 
+   @@unique([companyId, orderNumber])
++  @@index([customerId])
+   @@index([activeQuoteRevisionId])
+   @@map("orders")
+ }
+@@ -1115,3 +1121,90 @@ model ProductTemplateNodePart {
+ 
+   @@map("product_template_node_parts")
+ }
++
++// ─── CRM ─────────────────────────────────────────────────────────────────────
++
++enum CustomerPriority {
++  VIP
++  HIGH
++  NORMAL
++  LOW
++}
++
++enum InteractionType {
++  EMAIL
++  CALL
++  MEETING
++  NOTE
++}
++
++enum InteractionDirection {
++  INBOUND
++  OUTBOUND
++}
++
++model Customer {
++  id          String           @id @default(uuid())
++  companyId   String
++  name        String
++  inn         String?
++  phone       String?
++  email       String?
++  website     String?
++  notes       String?
++  priority    CustomerPriority @default(NORMAL)
++  createdAt   DateTime         @default(now())
++  updatedAt   DateTime         @updatedAt
++  deletedAt   DateTime?
++
++  company      Company       @relation(fields: [companyId], references: [id])
++  contacts     Contact[]
++  orders       Order[]
++  interactions Interaction[]
++
++  @@index([companyId])
++  @@index([email])
++  @@map("crm_customers")
++}
++
++model Contact {
++  id         String   @id @default(uuid())
++  customerId String
++  name       String
++  phone      String?
++  email      String?
++  position   String?
++  notes      String?
++  createdAt  DateTime @default(now())
++  updatedAt  DateTime @updatedAt
++
++  customer     Customer      @relation(fields: [customerId], references: [id])
++  interactions Interaction[]
++
++  @@index([customerId])
++  @@index([email])
++  @@map("crm_contacts")
++}
++
++model Interaction {
++  id             String               @id @default(uuid())
++  customerId     String
++  contactId      String?
++  orderId        String?
++  type           InteractionType
++  direction      InteractionDirection
++  subject        String?
++  body           String?
++  emailMessageId String?              @unique
++  createdAt      DateTime             @default(now())
++  createdById    String
++
++  customer  Customer  @relation(fields: [customerId], references: [id])
++  contact   Contact?  @relation(fields: [contactId], references: [id])
++  order     Order?    @relation(fields: [orderId], references: [id])
++  createdBy User      @relation("InteractionCreatedBy", fields: [createdById], references: [id])
++
++  @@index([customerId])
++  @@index([orderId])
++  @@map("crm_interactions")
++}
+diff --git a/public/crm.html b/public/crm.html
+new file mode 100644
+index 0000000..c07e884
+--- /dev/null
++++ b/public/crm.html
+@@ -0,0 +1,219 @@
++<!DOCTYPE html>
++<html lang="ru">
++<head>
++<meta charset="UTF-8">
++<meta name="viewport" content="width=device-width, initial-scale=1.0">
++<title>МеталлПро ERP — CRM</title>
++<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
++<style>
++:root{--bg:#f4f5f7;--surface:#fff;--border:#e2e5ea;--border2:#c8cdd6;--text:#1a1d23;--muted:#6b7280;--accent:#2563eb;--accent-h:#1d4ed8;--green:#16a34a;--red:#dc2626;--yellow:#d97706;--purple:#7c3aed;}
++*{margin:0;padding:0;box-sizing:border-box;}
++body{font-family:'Manrope',sans-serif;font-size:13px;background:var(--bg);color:var(--text);line-height:1.5;}
++.shell{display:flex;min-height:100vh;}
++.sidebar{width:204px;background:var(--surface);border-right:1px solid var(--border);flex-shrink:0;position:fixed;top:0;left:0;bottom:0;display:flex;flex-direction:column;}
++.logo{padding:14px 16px;border-bottom:1px solid var(--border);font-weight:800;font-size:14px;color:var(--accent);}
++.logo span{display:block;font-size:10px;font-weight:500;color:var(--muted);margin-top:2px;}
++nav{padding:8px;flex:1;}
++.nav-group{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--muted);padding:10px 8px 4px;}
++.nav-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:6px;cursor:pointer;color:var(--muted);font-weight:500;font-size:12.5px;transition:all .1s;margin-bottom:1px;text-decoration:none;}
++.nav-item:hover{background:var(--bg);color:var(--text);}
++.nav-item.active{background:#eff6ff;color:var(--accent);font-weight:600;}
++.sidebar-bottom{padding:12px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);}
++.main{margin-left:204px;flex:1;}
++.topbar{height:48px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:12px;position:sticky;top:0;z-index:20;}
++.topbar-title{font-weight:700;font-size:14px;}
++.topbar-right{margin-left:auto;display:flex;gap:8px;align-items:center;}
++.content{padding:20px;}
++.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:6px;border:none;cursor:pointer;font-family:'Manrope';font-size:12.5px;font-weight:600;transition:all .12s;white-space:nowrap;}
++.btn-primary{background:var(--accent);color:#fff;}.btn-primary:hover{background:var(--accent-h);}
++.btn-secondary{background:var(--bg);color:var(--text);border:1px solid var(--border2);}.btn-secondary:hover{border-color:var(--accent);color:var(--accent);}
++.btn-sm{padding:4px 10px;font-size:12px;}
++.card{background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;}
++.controls{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;}
++.search-wrap{position:relative;flex:1;min-width:200px;max-width:360px;}
++.search-input{width:100%;height:34px;padding:0 10px 0 30px;background:var(--surface);border:1px solid var(--border2);border-radius:5px;color:var(--text);font-family:'Manrope';font-size:13px;outline:none;transition:border-color .12s;}
++.search-input:focus{border-color:var(--accent);}
++.search-icon{position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--muted);pointer-events:none;}
++.count-label{font-size:12px;color:var(--muted);margin-left:auto;}
++table{width:100%;border-collapse:collapse;}
++thead th{padding:8px 12px;text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);background:#fafbfc;border-bottom:1px solid var(--border);}
++tbody tr{border-bottom:1px solid var(--border);transition:background .1s;cursor:pointer;}
++tbody tr:last-child{border-bottom:none;}
++tbody tr:hover{background:#f8faff;}
++td{padding:9px 12px;vertical-align:middle;}
++.badge{display:inline-flex;align-items:center;padding:2px 7px;border-radius:4px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;}
++.b-vip{background:#fdf4ff;color:var(--purple);}
++.b-high{background:#eff6ff;color:var(--accent);}
++.b-normal{background:#f0fdf4;color:var(--green);}
++.b-low{background:#fafafa;color:var(--muted);}
++.empty{text-align:center;padding:48px 20px;color:var(--muted);}
++.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;}
++.modal{background:var(--surface);border-radius:10px;width:100%;max-width:480px;box-shadow:0 20px 60px rgba(0,0,0,.2);}
++.modal-header{padding:16px 20px;border-bottom:1px solid var(--border);font-weight:700;font-size:14px;display:flex;justify-content:space-between;align-items:center;}
++.modal-body{padding:20px;}
++.modal-footer{padding:12px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;}
++.form-group{margin-bottom:14px;}
++.form-label{display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:4px;}
++.form-input{width:100%;height:34px;padding:0 10px;border:1px solid var(--border2);border-radius:5px;font-family:'Manrope';font-size:13px;color:var(--text);outline:none;background:var(--surface);}
++.form-input:focus{border-color:var(--accent);}
++.form-select{width:100%;height:34px;padding:0 10px;border:1px solid var(--border2);border-radius:5px;font-family:'Manrope';font-size:13px;color:var(--text);background:var(--surface);outline:none;}
++.hidden{display:none!important;}
++</style>
++</head>
++<body>
++<div class="shell">
++  <aside class="sidebar">
++    <div class="logo">МеталлПро ERP <span>Рабочий стенд v1.0</span></div>
++    <nav>
++      <div class="nav-group">Workflow</div>
++      <a class="nav-item" href="orders.html"><span>📋</span> Журнал заказов</a>
++      <a class="nav-item" href="simulator.html"><span>🧮</span> Расчёт КП</a>
++      <div class="nav-group">CRM</div>
++      <a class="nav-item active" href="crm.html"><span>👥</span> Клиенты</a>
++      <a class="nav-item" href="email-inbox.html"><span>📧</span> Входящие письма</a>
++      <div class="nav-group">Справочники</div>
++      <a class="nav-item" href="materials.html"><span>🔩</span> Материалы</a>
++      <a class="nav-item" href="templates.html"><span>📦</span> Шаблоны</a>
++    </nav>
++    <div class="sidebar-bottom">МеталлПро ERP · v1.0</div>
++  </aside>
++
++  <div class="main">
++    <div class="topbar">
++      <div class="topbar-title">Клиенты (CRM)</div>
++      <div class="topbar-right">
++        <button class="btn btn-primary" onclick="openCreateModal()">+ Новый клиент</button>
++      </div>
++    </div>
++
++    <div class="content">
++      <div class="controls">
++        <div class="search-wrap">
++          <span class="search-icon">🔍</span>
++          <input class="search-input" id="searchInput" type="text" placeholder="Поиск по названию..." oninput="onSearch()">
++        </div>
++        <span class="count-label" id="countLabel">Загрузка...</span>
++      </div>
++
++      <div class="card">
++        <table id="customersTable">
++          <thead>
++            <tr>
++              <th>Компания</th>
++              <th>ИНН</th>
++              <th>Email</th>
++              <th>Телефон</th>
++              <th>Заказов</th>
++              <th>Приоритет</th>
++            </tr>
++          </thead>
++          <tbody id="customersBody">
++            <tr><td colspan="6" class="empty"><div class="icon">⏳</div>Загрузка...</td></tr>
++          </tbody>
++        </table>
++      </div>
++    </div>
++  </div>
++</div>
++
++<!-- Create modal -->
++<div class="modal-bg hidden" id="createModal">
++  <div class="modal">
++    <div class="modal-header">
++      Новый клиент
++      <button class="btn btn-sm btn-secondary" onclick="closeCreateModal()">✕</button>
++    </div>
++    <div class="modal-body">
++      <div class="form-group"><label class="form-label">Название *</label><input class="form-input" id="fName" placeholder="ООО Металлторг"></div>
++      <div class="form-group"><label class="form-label">ИНН</label><input class="form-input" id="fInn" placeholder="7700000000"></div>
++      <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="fEmail" type="email" placeholder="info@company.ru"></div>
++      <div class="form-group"><label class="form-label">Телефон</label><input class="form-input" id="fPhone" placeholder="+7 495 000 00 00"></div>
++      <div class="form-group"><label class="form-label">Сайт</label><input class="form-input" id="fWebsite" placeholder="https://company.ru"></div>
++      <div class="form-group"><label class="form-label">Приоритет</label>
++        <select class="form-select" id="fPriority">
++          <option value="NORMAL">Обычный</option>
++          <option value="HIGH">Высокий</option>
++          <option value="VIP">VIP</option>
++          <option value="LOW">Низкий</option>
++        </select>
++      </div>
++    </div>
++    <div class="modal-footer">
++      <button class="btn btn-secondary" onclick="closeCreateModal()">Отмена</button>
++      <button class="btn btn-primary" onclick="createCustomer()">Создать</button>
++    </div>
++  </div>
++</div>
++
++<script>
++const API = '/api'
++let customers = []
++let searchTimer = null
++
++const PRIORITY_LABELS = { VIP: 'VIP', HIGH: 'Высокий', NORMAL: 'Обычный', LOW: 'Низкий' }
++const PRIORITY_CLASSES = { VIP: 'b-vip', HIGH: 'b-high', NORMAL: 'b-normal', LOW: 'b-low' }
++
++async function load(search = '') {
++  const q = search ? `?search=${encodeURIComponent(search)}` : ''
++  const res = await fetch(`${API}/customers${q}`, { headers: authHeaders() })
++  customers = await res.json()
++  render()
++}
++
++function render() {
++  const tbody = document.getElementById('customersBody')
++  document.getElementById('countLabel').textContent = `${customers.length} клиентов`
++  if (!customers.length) {
++    tbody.innerHTML = '<tr><td colspan="6" class="empty"><div class="icon">👥</div>Клиенты не найдены</td></tr>'
++    return
++  }
++  tbody.innerHTML = customers.map(c => `
++    <tr onclick="openCustomer('${c.id}')">
++      <td><strong>${escHtml(c.name)}</strong></td>
++      <td class="mono" style="color:var(--muted)">${c.inn || '—'}</td>
++      <td>${c.email ? `<a href="mailto:${escHtml(c.email)}" onclick="event.stopPropagation()">${escHtml(c.email)}</a>` : '—'}</td>
++      <td>${c.phone || '—'}</td>
++      <td style="color:var(--muted)">${c._count?.orders ?? 0}</td>
++      <td><span class="badge ${PRIORITY_CLASSES[c.priority] || 'b-normal'}">${PRIORITY_LABELS[c.priority] || c.priority}</span></td>
++    </tr>`).join('')
++}
++
++function openCustomer(id) { window.location.href = `customer.html?id=${id}` }
++
++function onSearch() {
++  clearTimeout(searchTimer)
++  searchTimer = setTimeout(() => load(document.getElementById('searchInput').value), 300)
++}
++
++function openCreateModal() { document.getElementById('createModal').classList.remove('hidden') }
++function closeCreateModal() { document.getElementById('createModal').classList.add('hidden') }
++
++async function createCustomer() {
++  const body = {
++    name:     document.getElementById('fName').value.trim(),
++    inn:      document.getElementById('fInn').value.trim() || null,
++    email:    document.getElementById('fEmail').value.trim() || null,
++    phone:    document.getElementById('fPhone').value.trim() || null,
++    website:  document.getElementById('fWebsite').value.trim() || null,
++    priority: document.getElementById('fPriority').value,
++  }
++  if (!body.name) { alert('Введите название компании'); return }
++  const res = await fetch(`${API}/customers`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(body) })
++  if (!res.ok) { alert('Ошибка при создании'); return }
++  closeCreateModal()
++  await load()
++  const created = await res.json()
++  window.location.href = `customer.html?id=${created.id}`
++}
++
++function authHeaders() {
++  const token = localStorage.getItem('erp_token')
++  return token ? { Authorization: `Bearer ${token}` } : {}
++}
++
++function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') }
++
++load()
++</script>
++</body>
++</html>
+diff --git a/public/customer.html b/public/customer.html
+new file mode 100644
+index 0000000..36e0665
+--- /dev/null
++++ b/public/customer.html
+@@ -0,0 +1,287 @@
++<!DOCTYPE html>
++<html lang="ru">
++<head>
++<meta charset="UTF-8">
++<meta name="viewport" content="width=device-width, initial-scale=1.0">
++<title>МеталлПро ERP — Клиент</title>
++<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
++<style>
++:root{--bg:#f4f5f7;--surface:#fff;--border:#e2e5ea;--border2:#c8cdd6;--text:#1a1d23;--muted:#6b7280;--accent:#2563eb;--accent-h:#1d4ed8;--green:#16a34a;--red:#dc2626;--yellow:#d97706;--purple:#7c3aed;--orange:#c2410c;}
++*{margin:0;padding:0;box-sizing:border-box;}
++body{font-family:'Manrope',sans-serif;font-size:13px;background:var(--bg);color:var(--text);line-height:1.5;}
++.shell{display:flex;min-height:100vh;}
++.sidebar{width:204px;background:var(--surface);border-right:1px solid var(--border);flex-shrink:0;position:fixed;top:0;left:0;bottom:0;display:flex;flex-direction:column;}
++.logo{padding:14px 16px;border-bottom:1px solid var(--border);font-weight:800;font-size:14px;color:var(--accent);}
++.logo span{display:block;font-size:10px;font-weight:500;color:var(--muted);margin-top:2px;}
++nav{padding:8px;flex:1;}
++.nav-group{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--muted);padding:10px 8px 4px;}
++.nav-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:6px;cursor:pointer;color:var(--muted);font-weight:500;font-size:12.5px;transition:all .1s;margin-bottom:1px;text-decoration:none;}
++.nav-item:hover{background:var(--bg);color:var(--text);}
++.nav-item.active{background:#eff6ff;color:var(--accent);font-weight:600;}
++.sidebar-bottom{padding:12px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);}
++.main{margin-left:204px;flex:1;}
++.topbar{height:48px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:12px;position:sticky;top:0;z-index:20;}
++.topbar-title{font-weight:700;font-size:14px;}
++.topbar-right{margin-left:auto;display:flex;gap:8px;align-items:center;}
++.content{padding:20px;display:grid;grid-template-columns:320px 1fr;gap:16px;align-items:start;}
++.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:6px;border:none;cursor:pointer;font-family:'Manrope';font-size:12.5px;font-weight:600;transition:all .12s;white-space:nowrap;}
++.btn-primary{background:var(--accent);color:#fff;}.btn-primary:hover{background:var(--accent-h);}
++.btn-secondary{background:var(--bg);color:var(--text);border:1px solid var(--border2);}.btn-secondary:hover{border-color:var(--accent);color:var(--accent);}
++.btn-success{background:#f0fdf4;color:var(--green);border:1px solid #bbf7d0;}.btn-success:hover{background:#dcfce7;}
++.btn-sm{padding:4px 10px;font-size:12px;}
++.card{background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:12px;}
++.card-header{padding:12px 16px;border-bottom:1px solid var(--border);font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);display:flex;justify-content:space-between;align-items:center;}
++.card-body{padding:16px;}
++.info-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:12.5px;}
++.info-row:last-child{border-bottom:none;}
++.info-label{color:var(--muted);font-weight:500;}
++.info-value{font-weight:600;text-align:right;}
++.badge{display:inline-flex;align-items:center;padding:2px 7px;border-radius:4px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;}
++.b-vip{background:#fdf4ff;color:var(--purple);}
++.b-high{background:#eff6ff;color:var(--accent);}
++.b-normal{background:#f0fdf4;color:var(--green);}
++.b-draft{background:#f8fafc;color:var(--muted);}
++.b-quotation{background:#eff6ff;color:var(--accent);}
++.b-approved{background:#f0fdf4;color:var(--green);}
++.b-production{background:#fff7ed;color:var(--orange);}
++.tab-bar{display:flex;border-bottom:1px solid var(--border);padding:0 16px;}
++.tab{padding:10px 16px;font-size:12.5px;font-weight:600;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;}
++.tab.active{color:var(--accent);border-bottom-color:var(--accent);}
++.tab-content{padding:16px;display:none;}
++.tab-content.active{display:block;}
++table{width:100%;border-collapse:collapse;}
++thead th{padding:7px 10px;text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);background:#fafbfc;border-bottom:1px solid var(--border);}
++tbody tr{border-bottom:1px solid var(--border);}
++tbody tr:last-child{border-bottom:none;}
++td{padding:8px 10px;vertical-align:middle;font-size:12.5px;}
++.interaction-item{padding:10px 0;border-bottom:1px solid var(--border);}
++.interaction-item:last-child{border-bottom:none;}
++.int-header{display:flex;gap:8px;align-items:center;margin-bottom:4px;}
++.int-dir{font-size:10px;padding:1px 6px;border-radius:3px;font-weight:700;}
++.int-in{background:#f0fdf4;color:var(--green);}
++.int-out{background:#eff6ff;color:var(--accent);}
++.int-time{font-size:11px;color:var(--muted);margin-left:auto;}
++.int-subject{font-weight:600;font-size:12.5px;}
++.int-body{font-size:12px;color:var(--muted);margin-top:2px;white-space:pre-wrap;max-height:60px;overflow:hidden;}
++.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;}
++.modal{background:var(--surface);border-radius:10px;width:100%;max-width:480px;box-shadow:0 20px 60px rgba(0,0,0,.2);}
++.modal-header{padding:16px 20px;border-bottom:1px solid var(--border);font-weight:700;font-size:14px;display:flex;justify-content:space-between;align-items:center;}
++.modal-body{padding:20px;}
++.modal-footer{padding:12px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;}
++.form-group{margin-bottom:14px;}
++.form-label{display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:4px;}
++.form-input{width:100%;height:34px;padding:0 10px;border:1px solid var(--border2);border-radius:5px;font-family:'Manrope';font-size:13px;color:var(--text);outline:none;background:var(--surface);}
++.form-input:focus{border-color:var(--accent);}
++.form-textarea{width:100%;padding:8px 10px;border:1px solid var(--border2);border-radius:5px;font-family:'Manrope';font-size:13px;color:var(--text);outline:none;background:var(--surface);resize:vertical;min-height:80px;}
++.form-textarea:focus{border-color:var(--accent);}
++.form-select{width:100%;height:34px;padding:0 10px;border:1px solid var(--border2);border-radius:5px;font-family:'Manrope';font-size:13px;background:var(--surface);}
++.hidden{display:none!important;}
++</style>
++</head>
++<body>
++<div class="shell">
++  <aside class="sidebar">
++    <div class="logo">МеталлПро ERP <span>Рабочий стенд v1.0</span></div>
++    <nav>
++      <div class="nav-group">Workflow</div>
++      <a class="nav-item" href="orders.html"><span>📋</span> Журнал заказов</a>
++      <a class="nav-item" href="simulator.html"><span>🧮</span> Расчёт КП</a>
++      <div class="nav-group">CRM</div>
++      <a class="nav-item active" href="crm.html"><span>👥</span> Клиенты</a>
++      <a class="nav-item" href="email-inbox.html"><span>📧</span> Входящие письма</a>
++      <div class="nav-group">Справочники</div>
++      <a class="nav-item" href="materials.html"><span>🔩</span> Материалы</a>
++      <a class="nav-item" href="templates.html"><span>📦</span> Шаблоны</a>
++    </nav>
++    <div class="sidebar-bottom">МеталлПро ERP · v1.0</div>
++  </aside>
++
++  <div class="main">
++    <div class="topbar">
++      <a href="crm.html" class="btn btn-secondary btn-sm">← Назад</a>
++      <div class="topbar-title" id="topbarTitle">Загрузка...</div>
++      <div class="topbar-right">
++        <button class="btn btn-success" onclick="createRfq()">+ Заявка на КП</button>
++        <button class="btn btn-secondary" onclick="openAddContact()">+ Контакт</button>
++      </div>
++    </div>
++
++    <div class="content" id="mainContent">
++      <div>
++        <!-- Info card -->
++        <div class="card">
++          <div class="card-header">Карточка клиента</div>
++          <div class="card-body" id="customerInfo">Загрузка...</div>
++        </div>
++        <!-- Contacts -->
++        <div class="card">
++          <div class="card-header">Контакты <button class="btn btn-sm btn-secondary" onclick="openAddContact()">+</button></div>
++          <div class="card-body" id="contactsList">—</div>
++        </div>
++      </div>
++
++      <!-- Tabs: Orders + History -->
++      <div class="card">
++        <div class="tab-bar">
++          <div class="tab active" onclick="showTab('orders')">Заказы</div>
++          <div class="tab" onclick="showTab('history')">История взаимодействий</div>
++        </div>
++        <div class="tab-content active" id="tab-orders">
++          <table id="ordersTable">
++            <thead><tr><th>Номер</th><th>Объект</th><th>Статус</th><th>Дата</th></tr></thead>
++            <tbody id="ordersBody"><tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">Загрузка...</td></tr></tbody>
++          </table>
++        </div>
++        <div class="tab-content" id="tab-history">
++          <div id="historyList" style="padding:0">Загрузка...</div>
++        </div>
++      </div>
++    </div>
++  </div>
++</div>
++
++<!-- Add Contact modal -->
++<div class="modal-bg hidden" id="contactModal">
++  <div class="modal">
++    <div class="modal-header">Добавить контакт <button class="btn btn-sm btn-secondary" onclick="closeContactModal()">✕</button></div>
++    <div class="modal-body">
++      <div class="form-group"><label class="form-label">Имя *</label><input class="form-input" id="cName"></div>
++      <div class="form-group"><label class="form-label">Должность</label><input class="form-input" id="cPosition"></div>
++      <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="cEmail" type="email"></div>
++      <div class="form-group"><label class="form-label">Телефон</label><input class="form-input" id="cPhone"></div>
++    </div>
++    <div class="modal-footer">
++      <button class="btn btn-secondary" onclick="closeContactModal()">Отмена</button>
++      <button class="btn btn-primary" onclick="saveContact()">Сохранить</button>
++    </div>
++  </div>
++</div>
++
++<!-- Create RFQ modal -->
++<div class="modal-bg hidden" id="rfqModal">
++  <div class="modal">
++    <div class="modal-header">Заявка на расчёт КП <button class="btn btn-sm btn-secondary" onclick="closeRfqModal()">✕</button></div>
++    <div class="modal-body">
++      <div class="form-group"><label class="form-label">Объект / название заявки *</label><input class="form-input" id="rfqTitle" placeholder="Металлоконструкции цеха №3"></div>
++      <div class="form-group"><label class="form-label">Примечание</label><textarea class="form-textarea" id="rfqNotes"></textarea></div>
++    </div>
++    <div class="modal-footer">
++      <button class="btn btn-secondary" onclick="closeRfqModal()">Отмена</button>
++      <button class="btn btn-success" onclick="submitRfq()">Создать заявку</button>
++    </div>
++  </div>
++</div>
++
++<script>
++const API = '/api'
++const params = new URLSearchParams(location.search)
++const customerId = params.get('id')
++let customer = null
++
++const STATUS_LABELS = { DRAFT:'Черновик', QUOTATION:'КП', AWAITING_APPROVAL:'На согласовании', APPROVED:'Утверждён', PRODUCTION:'В производстве', COMPLETED:'Завершён', DELIVERED:'Отгружен', CANCELLED:'Отменён' }
++const STATUS_CLASSES = { DRAFT:'b-draft', QUOTATION:'b-quotation', APPROVED:'b-approved', PRODUCTION:'b-production' }
++const PRIORITY_LABELS = { VIP:'VIP', HIGH:'Высокий', NORMAL:'Обычный', LOW:'Низкий' }
++const PRIORITY_CLASSES = { VIP:'b-vip', HIGH:'b-high', NORMAL:'b-normal', LOW:'b-draft' }
++
++if (!customerId) { window.location.href = 'crm.html' }
++
++async function load() {
++  const res = await fetch(`${API}/customers/${customerId}`, { headers: authHeaders() })
++  if (!res.ok) { window.location.href = 'crm.html'; return }
++  customer = await res.json()
++  renderCustomer()
++  renderContacts()
++  renderOrders()
++  renderHistory()
++}
++
++function renderCustomer() {
++  document.getElementById('topbarTitle').textContent = customer.name
++  document.getElementById('customerInfo').innerHTML = `
++    <div class="info-row"><span class="info-label">Компания</span><span class="info-value">${escHtml(customer.name)}</span></div>
++    ${customer.inn ? `<div class="info-row"><span class="info-label">ИНН</span><span class="info-value mono">${customer.inn}</span></div>` : ''}
++    ${customer.email ? `<div class="info-row"><span class="info-label">Email</span><span class="info-value"><a href="mailto:${escHtml(customer.email)}">${escHtml(customer.email)}</a></span></div>` : ''}
++    ${customer.phone ? `<div class="info-row"><span class="info-label">Телефон</span><span class="info-value">${customer.phone}</span></div>` : ''}
++    ${customer.website ? `<div class="info-row"><span class="info-label">Сайт</span><span class="info-value"><a href="${escHtml(customer.website)}" target="_blank">${escHtml(customer.website)}</a></span></div>` : ''}
++    <div class="info-row"><span class="info-label">Приоритет</span><span class="info-value"><span class="badge ${PRIORITY_CLASSES[customer.priority]||'b-normal'}">${PRIORITY_LABELS[customer.priority]||customer.priority}</span></span></div>
++  `
++}
++
++function renderContacts() {
++  const el = document.getElementById('contactsList')
++  if (!customer.contacts?.length) { el.innerHTML = '<div style="color:var(--muted);font-size:12px">Контакты не добавлены</div>'; return }
++  el.innerHTML = customer.contacts.map(c => `
++    <div style="padding:8px 0;border-bottom:1px solid var(--border)">
++      <div style="font-weight:600">${escHtml(c.name)}${c.position ? ` <span style="color:var(--muted);font-weight:400">— ${escHtml(c.position)}</span>` : ''}</div>
++      <div style="font-size:12px;color:var(--muted);margin-top:2px">${[c.email,c.phone].filter(Boolean).join(' · ') || '—'}</div>
++    </div>`).join('')
++}
++
++function renderOrders() {
++  const tbody = document.getElementById('ordersBody')
++  if (!customer.orders?.length) { tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">Заказов нет</td></tr>'; return }
++  tbody.innerHTML = customer.orders.map(o => `
++    <tr style="cursor:pointer" onclick="window.location.href='orders.html#${o.id}'">
++      <td class="mono">${escHtml(o.orderNumber)}</td>
++      <td>${escHtml(o.title)}</td>
++      <td><span class="badge ${STATUS_CLASSES[o.status]||'b-draft'}">${STATUS_LABELS[o.status]||o.status}</span></td>
++      <td style="color:var(--muted)">${fmtDate(o.createdAt)}</td>
++    </tr>`).join('')
++}
++
++function renderHistory() {
++  const el = document.getElementById('historyList')
++  if (!customer.interactions?.length) { el.innerHTML = '<div style="padding:16px;color:var(--muted)">История пуста</div>'; return }
++  el.innerHTML = customer.interactions.map(i => `
++    <div class="interaction-item" style="padding:10px 16px">
++      <div class="int-header">
++        <span style="font-size:11px;font-weight:700;color:var(--muted)">${i.type}</span>
++        <span class="int-dir ${i.direction==='INBOUND'?'int-in':'int-out'}">${i.direction==='INBOUND'?'← входящее':'→ исходящее'}</span>
++        ${i.order ? `<span style="font-size:11px;color:var(--accent)">Заказ ${escHtml(i.order.orderNumber)}</span>` : ''}
++        <span class="int-time">${fmtDate(i.createdAt)}</span>
++      </div>
++      ${i.subject ? `<div class="int-subject">${escHtml(i.subject)}</div>` : ''}
++      ${i.body ? `<div class="int-body">${escHtml(i.body)}</div>` : ''}
++    </div>`).join('')
++}
++
++function showTab(name) {
++  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', ['orders','history'][i]===name))
++  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'))
++  document.getElementById(`tab-${name}`).classList.add('active')
++}
++
++function openAddContact() { document.getElementById('contactModal').classList.remove('hidden') }
++function closeContactModal() { document.getElementById('contactModal').classList.add('hidden') }
++
++async function saveContact() {
++  const body = { name: document.getElementById('cName').value.trim(), position: document.getElementById('cPosition').value.trim()||null, email: document.getElementById('cEmail').value.trim()||null, phone: document.getElementById('cPhone').value.trim()||null }
++  if (!body.name) { alert('Введите имя'); return }
++  const res = await fetch(`${API}/customers/${customerId}/contacts`, { method:'POST', headers:{'Content-Type':'application/json',...authHeaders()}, body:JSON.stringify(body) })
++  if (!res.ok) { alert('Ошибка'); return }
++  closeContactModal()
++  await load()
++}
++
++function createRfq() { document.getElementById('rfqModal').classList.remove('hidden') }
++function closeRfqModal() { document.getElementById('rfqModal').classList.add('hidden') }
++
++async function submitRfq() {
++  const title = document.getElementById('rfqTitle').value.trim()
++  if (!title) { alert('Введите название заявки'); return }
++  const body = { orderNumber: `RFQ-${Date.now()}`, customerName: customer.name, customerId, title, description: document.getElementById('rfqNotes').value.trim()||null }
++  const res = await fetch(`${API}/orders`, { method:'POST', headers:{'Content-Type':'application/json',...authHeaders()}, body:JSON.stringify(body) })
++  if (!res.ok) { alert('Ошибка создания заявки'); return }
++  const order = await res.json()
++  closeRfqModal()
++  window.location.href = `simulator.html?orderId=${order.id}`
++}
++
++function authHeaders() { const t=localStorage.getItem('erp_token'); return t?{Authorization:`Bearer ${t}`}:{} }
++function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') }
++function fmtDate(d) { return d ? new Date(d).toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric'}) : '—' }
++
++load()
++</script>
++</body>
++</html>
+diff --git a/public/email-inbox.html b/public/email-inbox.html
+new file mode 100644
+index 0000000..f15f16f
+--- /dev/null
++++ b/public/email-inbox.html
+@@ -0,0 +1,325 @@
++<!DOCTYPE html>
++<html lang="ru">
++<head>
++<meta charset="UTF-8">
++<meta name="viewport" content="width=device-width, initial-scale=1.0">
++<title>МеталлПро ERP — Email Copilot</title>
++<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
++<style>
++:root{--bg:#f4f5f7;--surface:#fff;--border:#e2e5ea;--border2:#c8cdd6;--text:#1a1d23;--muted:#6b7280;--accent:#2563eb;--accent-h:#1d4ed8;--green:#16a34a;--red:#dc2626;--yellow:#d97706;--purple:#7c3aed;--orange:#c2410c;}
++*{margin:0;padding:0;box-sizing:border-box;}
++body{font-family:'Manrope',sans-serif;font-size:13px;background:var(--bg);color:var(--text);line-height:1.5;}
++.shell{display:flex;min-height:100vh;}
++.sidebar{width:204px;background:var(--surface);border-right:1px solid var(--border);flex-shrink:0;position:fixed;top:0;left:0;bottom:0;display:flex;flex-direction:column;}
++.logo{padding:14px 16px;border-bottom:1px solid var(--border);font-weight:800;font-size:14px;color:var(--accent);}
++.logo span{display:block;font-size:10px;font-weight:500;color:var(--muted);margin-top:2px;}
++nav{padding:8px;flex:1;}
++.nav-group{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--muted);padding:10px 8px 4px;}
++.nav-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:6px;cursor:pointer;color:var(--muted);font-weight:500;font-size:12.5px;transition:all .1s;margin-bottom:1px;text-decoration:none;}
++.nav-item:hover{background:var(--bg);color:var(--text);}
++.nav-item.active{background:#eff6ff;color:var(--accent);font-weight:600;}
++.sidebar-bottom{padding:12px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);}
++.main{margin-left:204px;flex:1;display:flex;flex-direction:column;}
++.topbar{height:48px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:12px;position:sticky;top:0;z-index:20;flex-shrink:0;}
++.topbar-title{font-weight:700;font-size:14px;}
++.topbar-right{margin-left:auto;display:flex;gap:8px;align-items:center;}
++.email-shell{display:flex;flex:1;height:calc(100vh - 48px);}
++.email-list{width:340px;flex-shrink:0;border-right:1px solid var(--border);overflow-y:auto;background:var(--surface);}
++.email-detail{flex:1;overflow-y:auto;background:var(--bg);padding:20px;}
++.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:6px;border:none;cursor:pointer;font-family:'Manrope';font-size:12.5px;font-weight:600;transition:all .12s;white-space:nowrap;}
++.btn-primary{background:var(--accent);color:#fff;}.btn-primary:hover{background:var(--accent-h);}
++.btn-secondary{background:var(--bg);color:var(--text);border:1px solid var(--border2);}.btn-secondary:hover{border-color:var(--accent);color:var(--accent);}
++.btn-success{background:#f0fdf4;color:var(--green);border:1px solid #bbf7d0;}
++.btn-sm{padding:4px 10px;font-size:12px;}
++.filter-bar{padding:8px 12px;border-bottom:1px solid var(--border);display:flex;gap:6px;}
++.filter-btn{padding:3px 10px;border-radius:12px;border:1px solid var(--border2);background:var(--surface);color:var(--muted);font-family:'Manrope';font-size:11.5px;font-weight:600;cursor:pointer;}
++.filter-btn.active{background:var(--accent);border-color:var(--accent);color:#fff;}
++.email-item{padding:12px 14px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s;}
++.email-item:hover{background:#f8faff;}
++.email-item.selected{background:#eff6ff;border-left:3px solid var(--accent);}
++.email-item.unread .ei-subject{font-weight:700;}
++.ei-from{font-size:12.5px;font-weight:600;margin-bottom:2px;display:flex;justify-content:space-between;}
++.ei-subject{font-size:12px;color:var(--text);margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
++.ei-meta{display:flex;gap:6px;align-items:center;}
++.badge{display:inline-flex;align-items:center;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;}
++.b-rfq{background:#eff6ff;color:var(--accent);}
++.b-order{background:#f0fdf4;color:var(--green);}
++.b-question{background:#f5f3ff;color:var(--purple);}
++.b-complaint{background:#fef2f2;color:var(--red);}
++.b-spam{background:#f9fafb;color:var(--muted);}
++.b-other{background:#f9fafb;color:var(--muted);}
++.b-critical{background:#fef2f2;color:var(--red);}
++.b-urgent{background:#fff7ed;color:var(--orange);}
++.b-normal{background:#f0fdf4;color:var(--green);}
++.b-low{background:#f9fafb;color:var(--muted);}
++.detail-empty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:14px;}
++.detail-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:16px;overflow:hidden;}
++.detail-header{padding:14px 18px;border-bottom:1px solid var(--border);}
++.detail-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;}
++.detail-body{padding:18px;font-size:13px;line-height:1.7;white-space:pre-wrap;max-height:300px;overflow-y:auto;}
++.section-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);padding:12px 18px 8px;border-bottom:1px solid var(--border);}
++.summary-block{padding:14px 18px;background:#f8faff;border-bottom:1px solid var(--border);font-size:13px;line-height:1.6;color:var(--text);}
++.entity-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:14px 18px;}
++.entity-item{background:var(--bg);border-radius:6px;padding:8px 12px;}
++.entity-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:2px;}
++.entity-value{font-size:13px;font-weight:600;}
++.draft-list{padding:14px 18px;}
++.draft-item{border:2px solid var(--border);border-radius:8px;padding:14px;margin-bottom:10px;cursor:pointer;transition:all .12s;}
++.draft-item:hover,.draft-item.selected{border-color:var(--accent);background:#f8fbff;}
++.draft-strategy{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--accent);margin-bottom:6px;}
++.draft-body{font-size:12.5px;line-height:1.6;color:var(--text);white-space:pre-wrap;max-height:120px;overflow:hidden;}
++.reply-area{padding:14px 18px;}
++.reply-textarea{width:100%;min-height:140px;padding:12px;border:1px solid var(--border2);border-radius:6px;font-family:'Manrope';font-size:13px;resize:vertical;outline:none;line-height:1.6;}
++.reply-textarea:focus{border-color:var(--accent);}
++.reply-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
++.items-table{padding:0 18px 14px;}
++.items-table table{width:100%;border-collapse:collapse;font-size:12.5px;}
++.items-table th{padding:6px 8px;text-align:left;font-size:10.5px;font-weight:700;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border);}
++.items-table td{padding:6px 8px;border-bottom:1px solid var(--border);}
++.hidden{display:none!important;}
++</style>
++</head>
++<body>
++<div class="shell">
++  <aside class="sidebar">
++    <div class="logo">МеталлПро ERP <span>Рабочий стенд v1.0</span></div>
++    <nav>
++      <div class="nav-group">Workflow</div>
++      <a class="nav-item" href="orders.html"><span>📋</span> Журнал заказов</a>
++      <a class="nav-item" href="simulator.html"><span>🧮</span> Расчёт КП</a>
++      <div class="nav-group">CRM</div>
++      <a class="nav-item" href="crm.html"><span>👥</span> Клиенты</a>
++      <a class="nav-item active" href="email-inbox.html"><span>📧</span> Входящие письма</a>
++      <div class="nav-group">Справочники</div>
++      <a class="nav-item" href="materials.html"><span>🔩</span> Материалы</a>
++      <a class="nav-item" href="templates.html"><span>📦</span> Шаблоны</a>
++    </nav>
++    <div class="sidebar-bottom">МеталлПро ERP · v1.0</div>
++  </aside>
++
++  <div class="main">
++    <div class="topbar">
++      <div class="topbar-title">Email Copilot</div>
++      <div class="topbar-right">
++        <span id="pollStatus" style="font-size:12px;color:var(--muted)">Последнее обновление: —</span>
++        <button class="btn btn-secondary btn-sm" onclick="triggerPoll()">⟳ Проверить почту</button>
++      </div>
++    </div>
++
++    <div class="email-shell">
++      <!-- Left: message list -->
++      <div class="email-list">
++        <div class="filter-bar">
++          <button class="filter-btn active" onclick="setFilter('pending')" id="f-pending">Новые</button>
++          <button class="filter-btn" onclick="setFilter('')" id="f-all">Все</button>
++          <button class="filter-btn" onclick="setFilter('rfq')" id="f-rfq">RFQ</button>
++        </div>
++        <div id="messageList"></div>
++      </div>
++
++      <!-- Right: detail -->
++      <div class="email-detail" id="emailDetail">
++        <div class="detail-empty">Выберите письмо из списка</div>
++      </div>
++    </div>
++  </div>
++</div>
++
++<script>
++const AI_API = (window.AI_API_URL || 'http://localhost:4000') + '/api/email-copilot'
++const ERP_API = '/api'
++let messages = []
++let selectedId = null
++let currentFilter = 'pending'
++let selectedDraftIdx = null
++
++const INTENT_LABELS = { RFQ:'КП', ORDER:'Заказ', QUESTION:'Вопрос', COMPLAINT:'Жалоба', CLARIFICATION:'Уточнение', SPAM:'Спам', OTHER:'Другое' }
++const INTENT_CLASSES = { RFQ:'b-rfq', ORDER:'b-order', QUESTION:'b-question', COMPLAINT:'b-complaint', SPAM:'b-spam', OTHER:'b-other' }
++const PRIO_CLASSES   = { critical:'b-critical', urgent:'b-urgent', normal:'b-normal', low:'b-low' }
++
++async function loadMessages() {
++  const q = currentFilter === 'rfq' ? `?intent=RFQ` : currentFilter === 'pending' ? `?status=pending` : ''
++  try {
++    const res = await fetch(`${AI_API}/inbox${q}`)
++    if (!res.ok) { showListError(); return }
++    const data = await res.json()
++    messages = data.messages || []
++    renderList()
++  } catch { showListError() }
++}
++
++function showListError() {
++  document.getElementById('messageList').innerHTML = `<div style="padding:20px;text-align:center;color:var(--muted)">Нет связи с AI-сервисом.<br><small>Проверьте что metalpro-ai-polygon запущен.</small></div>`
++}
++
++function renderList() {
++  const el = document.getElementById('messageList')
++  if (!messages.length) { el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--muted)">Нет писем</div>`; return }
++  el.innerHTML = messages.map(m => `
++    <div class="email-item ${m.status==='pending'?'unread':''} ${m.id===selectedId?'selected':''}" onclick="selectMessage('${m.id}')">
++      <div class="ei-from">
++        <span>${escHtml(extractName(m.fromAddress))}</span>
++        <span style="font-size:10.5px;color:var(--muted);font-weight:400">${fmtTime(m.receivedAt)}</span>
++      </div>
++      <div class="ei-subject">${escHtml(m.subject||'(без темы)')}</div>
++      <div class="ei-meta">
++        ${m.aiIntent ? `<span class="badge ${INTENT_CLASSES[m.aiIntent]||'b-other'}">${INTENT_LABELS[m.aiIntent]||m.aiIntent}</span>` : ''}
++        ${m.aiPriority ? `<span class="badge ${PRIO_CLASSES[m.aiPriority]||'b-normal'}">${m.aiPriority}</span>` : ''}
++      </div>
++    </div>`).join('')
++}
++
++function selectMessage(id) {
++  selectedId = id
++  selectedDraftIdx = null
++  renderList()
++  const msg = messages.find(m => m.id === id)
++  if (!msg) return
++  renderDetail(msg)
++}
++
++function renderDetail(msg) {
++  const drafts = (msg.aiDrafts || [])
++  const extracted = msg.aiExtracted || {}
++  const items = extracted.items || []
++
++  document.getElementById('emailDetail').innerHTML = `
++    <div class="detail-card">
++      <div class="detail-header">
++        <div style="font-weight:700;font-size:14px;margin-bottom:4px">${escHtml(msg.subject||'(без темы)')}</div>
++        <div style="font-size:12.5px;color:var(--muted)">От: ${escHtml(msg.fromAddress)} · ${fmtDate(msg.receivedAt)}</div>
++        <div class="detail-meta">
++          ${msg.aiIntent ? `<span class="badge ${INTENT_CLASSES[msg.aiIntent]||'b-other'}">${INTENT_LABELS[msg.aiIntent]||msg.aiIntent}</span>` : ''}
++          ${msg.aiPriority ? `<span class="badge ${PRIO_CLASSES[msg.aiPriority]||'b-normal'}">${msg.aiPriority}</span>` : ''}
++          ${msg.aiConfidence ? `<span style="font-size:11px;color:var(--muted)">уверенность ${Math.round(msg.aiConfidence*100)}%</span>` : ''}
++          ${msg.aiModelUsed ? `<span style="font-size:11px;color:var(--muted)">via ${msg.aiModelUsed}</span>` : ''}
++        </div>
++      </div>
++      ${msg.aiSummary ? `<div class="summary-block">💡 ${escHtml(msg.aiSummary)}</div>` : ''}
++      <div class="detail-body">${escHtml(msg.bodyText||'')}</div>
++    </div>
++
++    ${items.length ? `
++    <div class="detail-card">
++      <div class="section-title">Извлечённые позиции</div>
++      <div class="items-table">
++        <table>
++          <thead><tr><th>Наименование</th><th>Кол-во</th><th>Ед.</th><th>Материал</th></tr></thead>
++          <tbody>${items.map(it=>`<tr><td>${escHtml(it.name||'')}</td><td>${it.quantity||'—'}</td><td>${it.unit||'—'}</td><td>${it.material||'—'}</td></tr>`).join('')}</tbody>
++        </table>
++      </div>
++    </div>` : ''}
++
++    ${extracted.company||extracted.contact||extracted.deadline ? `
++    <div class="detail-card">
++      <div class="section-title">Извлечённые данные</div>
++      <div class="entity-grid">
++        ${extracted.company  ? `<div class="entity-item"><div class="entity-label">Компания</div><div class="entity-value">${escHtml(extracted.company)}</div></div>` : ''}
++        ${extracted.contact  ? `<div class="entity-item"><div class="entity-label">Контакт</div><div class="entity-value">${escHtml(extracted.contact)}</div></div>` : ''}
++        ${extracted.deadline ? `<div class="entity-item"><div class="entity-label">Срок</div><div class="entity-value">${escHtml(extracted.deadline)}</div></div>` : ''}
++        ${extracted.currency ? `<div class="entity-item"><div class="entity-label">Валюта</div><div class="entity-value">${escHtml(extracted.currency)}</div></div>` : ''}
++      </div>
++    </div>` : ''}
++
++    ${drafts.length ? `
++    <div class="detail-card">
++      <div class="section-title">Варианты ответа — выберите один</div>
++      <div class="draft-list">
++        ${drafts.map((d,i)=>`
++          <div class="draft-item" id="draft-${i}" onclick="selectDraft(${i}, ${JSON.stringify(d.body).replace(/</g,'\\u003c')})">
++            <div class="draft-strategy">${escHtml(d.strategy||`Вариант ${i+1}`)}</div>
++            <div class="draft-body">${escHtml(d.body||'')}</div>
++          </div>`).join('')}
++      </div>
++    </div>` : ''}
++
++    <div class="detail-card">
++      <div class="section-title">Ответ</div>
++      <div class="reply-area">
++        <textarea class="reply-textarea" id="replyText" placeholder="Выберите вариант выше или напишите ответ вручную..."></textarea>
++        <div class="reply-actions">
++          <button class="btn btn-primary" onclick="sendReply('${msg.messageId}','${msg.fromAddress}')">Отправить</button>
++          ${msg.aiSuggestRfq !== false ? `<button class="btn btn-success" onclick="openRfqModal('${msg.messageId}','${escHtml(extracted.company||msg.fromAddress)}')">+ Заявка на КП</button>` : ''}
++          <button class="btn btn-secondary btn-sm" onclick="archiveMsg('${msg.id}')">В архив</button>
++        </div>
++      </div>
++    </div>`
++
++  return ''
++}
++
++function selectDraft(idx, body) {
++  selectedDraftIdx = idx
++  document.querySelectorAll('.draft-item').forEach((el, i) => el.classList.toggle('selected', i === idx))
++  document.getElementById('replyText').value = body
++}
++
++async function sendReply(messageId, fromAddress) {
++  const body = document.getElementById('replyText').value.trim()
++  if (!body) { alert('Введите текст ответа'); return }
++  const res = await fetch(`${AI_API}/reply`, {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/json' },
++    body: JSON.stringify({ messageId, replyBody: body, sentBy: 'manager' }),
++  })
++  if (!res.ok) { alert('Ошибка отправки'); return }
++  alert('Ответ отправлен!')
++  await loadMessages()
++  document.getElementById('emailDetail').innerHTML = '<div class="detail-empty">Выберите письмо из списка</div>'
++}
++
++async function archiveMsg(id) {
++  await fetch(`${AI_API}/archive/${id}`, { method: 'POST' })
++  await loadMessages()
++  document.getElementById('emailDetail').innerHTML = '<div class="detail-empty">Выберите письмо из списка</div>'
++}
++
++let rfqCtx = {}
++function openRfqModal(messageId, customerName) {
++  rfqCtx = { messageId, customerName }
++  const title = prompt(`Создать заявку на КП для "${customerName}".\nВведите название объекта:`)
++  if (!title) return
++  createRfq(title)
++}
++
++async function createRfq(title) {
++  const res = await fetch(`${AI_API}/create-rfq`, {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/json' },
++    body: JSON.stringify({ messageId: rfqCtx.messageId, customerName: rfqCtx.customerName, title }),
++  })
++  if (!res.ok) { alert('Ошибка создания заявки'); return }
++  const data = await res.json()
++  if (confirm(`Заявка ${data.orderNumber} создана! Открыть расчёт КП?`)) {
++    window.location.href = `simulator.html?orderId=${data.orderId}`
++  }
++}
++
++async function triggerPoll() {
++  document.getElementById('pollStatus').textContent = 'Проверяю...'
++  try {
++    const res = await fetch(`${AI_API}/poll`, { method: 'POST' })
++    const data = await res.json()
++    document.getElementById('pollStatus').textContent = `Получено: ${data.processed} новых · ${fmtTime(new Date())}`
++    await loadMessages()
++  } catch {
++    document.getElementById('pollStatus').textContent = 'Ошибка подключения'
++  }
++}
++
++function setFilter(f) {
++  currentFilter = f
++  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'))
++  document.getElementById(f === '' ? 'f-all' : f === 'rfq' ? 'f-rfq' : 'f-pending').classList.add('active')
++  loadMessages()
++}
++
++function extractName(addr) { const m = addr.match(/^(.+?)\s*</) ; return m ? m[1].trim() : addr.split('@')[0] }
++function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') }
++function fmtDate(d) { return d ? new Date(d).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '' }
++function fmtTime(d) { return d ? new Date(d).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}) : '' }
++
++loadMessages()
++</script>
++</body>
++</html>
+diff --git a/public/materials.html b/public/materials.html
+index 6f45c12..d72cfcd 100644
+--- a/public/materials.html
++++ b/public/materials.html
+@@ -89,7 +89,10 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(37
+     <div class="nav-group">Workflow</div>
+     <a class="nav-item" href="orders.html"><span>📋</span> Журнал заказов</a>
+     <a class="nav-item" href="simulator.html"><span>🧮</span> Расчёт КП</a>
+-    <div class="nav-group">Справочники</div>
++          <div class="nav-group">CRM</div>
++      <a class="nav-item" href="crm.html"><span>👥</span> Клиенты</a>
++      <a class="nav-item" href="email-inbox.html"><span>📧</span> Входящие письма</a>
++      <div class="nav-group">Справочники</div>
+     <a class="nav-item active" href="materials.html"><span>🔩</span> Материалы</a>
+     <a class="nav-item" href="templates.html"><span>📦</span> Шаблоны</a>
+   </nav>
+diff --git a/public/orders.html b/public/orders.html
+index 90c8f23..5a42e8c 100644
+--- a/public/orders.html
++++ b/public/orders.html
+@@ -107,7 +107,10 @@ td{padding:9px 12px;vertical-align:middle;}
+     <div class="nav-group">Workflow</div>
+     <a class="nav-item active" href="orders.html"><span>📋</span> Журнал заказов</a>
+     <a class="nav-item" href="simulator.html"><span>🧮</span> Расчёт КП</a>
+-    <div class="nav-group">Справочники</div>
++          <div class="nav-group">CRM</div>
++      <a class="nav-item" href="crm.html"><span>👥</span> Клиенты</a>
++      <a class="nav-item" href="email-inbox.html"><span>📧</span> Входящие письма</a>
++      <div class="nav-group">Справочники</div>
+     <a class="nav-item" href="materials.html"><span>🔩</span> Материалы</a>
+     <a class="nav-item" href="templates.html"><span>📦</span> Шаблоны</a>
+   </nav>
+diff --git a/public/templates.html b/public/templates.html
+index 4973102..61a3691 100644
+--- a/public/templates.html
++++ b/public/templates.html
+@@ -127,7 +127,10 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(37
+     <div class="nav-group">Workflow</div>
+     <a class="nav-item" href="orders.html"><span>📋</span> Журнал заказов</a>
+     <a class="nav-item" href="simulator.html"><span>🧮</span> Расчёт КП</a>
+-    <div class="nav-group">Справочники</div>
++          <div class="nav-group">CRM</div>
++      <a class="nav-item" href="crm.html"><span>👥</span> Клиенты</a>
++      <a class="nav-item" href="email-inbox.html"><span>📧</span> Входящие письма</a>
++      <div class="nav-group">Справочники</div>
+     <a class="nav-item" href="materials.html"><span>🔩</span> Материалы</a>
+     <a class="nav-item active" href="templates.html"><span>📦</span> Шаблоны</a>
+   </nav>
+diff --git a/server.js b/server.js
+index 0c86d42..52f9196 100644
+--- a/server.js
++++ b/server.js
+@@ -21,6 +21,7 @@ const routes = [
+   ...require('./src/routes/procurement'),
+   ...require('./src/routes/inventory'),
+   ...require('./src/routes/templates'),
++  ...require('./src/routes/customers'),
+   { method: 'GET', pathname: '/api/health', handler: async (req, res) => {
+     json(res, { status: 'ok', db: 'connected', version: '1.0.0' })
+   }},
+diff --git a/src/routes/customers.js b/src/routes/customers.js
+new file mode 100644
+index 0000000..89f64f9
+--- /dev/null
++++ b/src/routes/customers.js
+@@ -0,0 +1,72 @@
++const { json }       = require('../utils/response')
++const { parseBody }  = require('../utils/parseBody')
++const { listCustomers, getCustomer, createCustomer, updateCustomer, deleteCustomer } = require('../services/customerService')
++const { listInteractions, createInteraction } = require('../services/interactionService')
++const { listContacts, createContact, updateContact, deleteContact } = require('../services/contactService')
++
++module.exports = [
++  { method: 'GET', pathname: '/api/customers', handler: async (req, res, params, query) => {
++    const q = new URLSearchParams(query || '')
++    json(res, await listCustomers({ search: q.get('search') || '', email: q.get('email') || '' }))
++  }},
++
++  { method: 'POST', pathname: '/api/customers', handler: async (req, res) => {
++    const body = await parseBody(req)
++    if (!body.name) return json(res, { error: 'name is required' }, 400)
++    json(res, await createCustomer(body), 201)
++  }},
++
++  { method: 'GET', pathname: '/api/customers/:id', handler: async (req, res, params) => {
++    const data = await getCustomer(params.id)
++    if (!data) return json(res, { error: 'Not found' }, 404)
++    json(res, data)
++  }},
++
++  { method: 'PUT', pathname: '/api/customers/:id', handler: async (req, res, params) => {
++    const body = await parseBody(req)
++    if (!body.name) return json(res, { error: 'name is required' }, 400)
++    json(res, await updateCustomer(params.id, body))
++  }},
++
++  { method: 'DELETE', pathname: '/api/customers/:id', handler: async (req, res, params) => {
++    await deleteCustomer(params.id)
++    json(res, { ok: true })
++  }},
++
++  // Contacts nested under customer
++  { method: 'GET', pathname: '/api/customers/:id/contacts', handler: async (req, res, params) => {
++    json(res, await listContacts(params.id))
++  }},
++
++  { method: 'POST', pathname: '/api/customers/:id/contacts', handler: async (req, res, params) => {
++    const body = await parseBody(req)
++    if (!body.name) return json(res, { error: 'name is required' }, 400)
++    json(res, await createContact(params.id, body), 201)
++  }},
++
++  { method: 'PUT', pathname: '/api/contacts/:id', handler: async (req, res, params) => {
++    const body = await parseBody(req)
++    json(res, await updateContact(params.id, body))
++  }},
++
++  { method: 'DELETE', pathname: '/api/contacts/:id', handler: async (req, res, params) => {
++    await deleteContact(params.id)
++    json(res, { ok: true })
++  }},
++
++  // Interactions nested under customer
++  { method: 'GET', pathname: '/api/customers/:id/interactions', handler: async (req, res, params, query) => {
++    const q = new URLSearchParams(query || '')
++    const limit = parseInt(q.get('limit') || '20', 10)
++    json(res, await listInteractions(params.id, { limit }))
++  }},
++
++  // POST /api/interactions — for AI Email Copilot to save interactions
++  { method: 'POST', pathname: '/api/interactions', handler: async (req, res) => {
++    const body = await parseBody(req)
++    if (!body.customerId) return json(res, { error: 'customerId is required' }, 400)
++    if (!body.type)       return json(res, { error: 'type is required' }, 400)
++    if (!body.direction)  return json(res, { error: 'direction is required' }, 400)
++    json(res, await createInteraction(body), 201)
++  }},
++]
+diff --git a/src/services/contactService.js b/src/services/contactService.js
+new file mode 100644
+index 0000000..1e49a62
+--- /dev/null
++++ b/src/services/contactService.js
+@@ -0,0 +1,40 @@
++const prisma = require('../repositories/prisma')
++
++async function listContacts(customerId) {
++  return prisma.contact.findMany({
++    where: { customerId },
++    orderBy: { name: 'asc' },
++  })
++}
++
++async function createContact(customerId, data) {
++  return prisma.contact.create({
++    data: {
++      customerId,
++      name:     data.name,
++      phone:    data.phone    || null,
++      email:    data.email    || null,
++      position: data.position || null,
++      notes:    data.notes    || null,
++    },
++  })
++}
++
++async function updateContact(id, data) {
++  return prisma.contact.update({
++    where: { id },
++    data: {
++      name:     data.name,
++      phone:    data.phone    ?? undefined,
++      email:    data.email    ?? undefined,
++      position: data.position ?? undefined,
++      notes:    data.notes    ?? undefined,
++    },
++  })
++}
++
++async function deleteContact(id) {
++  return prisma.contact.delete({ where: { id } })
++}
++
++module.exports = { listContacts, createContact, updateContact, deleteContact }
+diff --git a/src/services/customerService.js b/src/services/customerService.js
+new file mode 100644
+index 0000000..11f2ac2
+--- /dev/null
++++ b/src/services/customerService.js
+@@ -0,0 +1,66 @@
++const prisma    = require('../repositories/prisma')
++const { getCompany } = require('../utils/company')
++
++async function listCustomers({ search = '', email = '' } = {}) {
++  const company = await getCompany()
++  if (!company) return []
++  return prisma.customer.findMany({
++    where: {
++      companyId: company.id,
++      deletedAt: null,
++      ...(search ? { name: { contains: search, mode: 'insensitive' } } : {}),
++      ...(email  ? { email: { contains: email,  mode: 'insensitive' } } : {}),
++    },
++    include: { contacts: { where: { deletedAt: undefined }, take: 5 }, _count: { select: { orders: true, interactions: true } } },
++    orderBy: [{ priority: 'asc' }, { name: 'asc' }],
++  })
++}
++
++async function getCustomer(id) {
++  return prisma.customer.findFirst({
++    where: { id, deletedAt: null },
++    include: {
++      contacts: { orderBy: { name: 'asc' } },
++      orders:   { orderBy: { createdAt: 'desc' }, take: 20, select: { id: true, orderNumber: true, title: true, status: true, createdAt: true } },
++      interactions: { orderBy: { createdAt: 'desc' }, take: 20, include: { contact: true, createdBy: { select: { firstName: true, lastName: true } } } },
++    },
++  })
++}
++
++async function createCustomer(data) {
++  const company = await getCompany()
++  if (!company) throw new Error('Company not found')
++  return prisma.customer.create({
++    data: {
++      companyId: company.id,
++      name:      data.name,
++      inn:       data.inn       || null,
++      phone:     data.phone     || null,
++      email:     data.email     || null,
++      website:   data.website   || null,
++      notes:     data.notes     || null,
++      priority:  data.priority  || 'NORMAL',
++    },
++  })
++}
++
++async function updateCustomer(id, data) {
++  return prisma.customer.update({
++    where: { id },
++    data: {
++      name:     data.name,
++      inn:      data.inn      ?? undefined,
++      phone:    data.phone    ?? undefined,
++      email:    data.email    ?? undefined,
++      website:  data.website  ?? undefined,
++      notes:    data.notes    ?? undefined,
++      priority: data.priority ?? undefined,
++    },
++  })
++}
++
++async function deleteCustomer(id) {
++  return prisma.customer.update({ where: { id }, data: { deletedAt: new Date() } })
++}
++
++module.exports = { listCustomers, getCustomer, createCustomer, updateCustomer, deleteCustomer }
+diff --git a/src/services/interactionService.js b/src/services/interactionService.js
+new file mode 100644
+index 0000000..73c8e5a
+--- /dev/null
++++ b/src/services/interactionService.js
+@@ -0,0 +1,36 @@
++const prisma    = require('../repositories/prisma')
++const { getCompany } = require('../utils/company')
++
++async function listInteractions(customerId, { limit = 20 } = {}) {
++  return prisma.interaction.findMany({
++    where: { customerId },
++    orderBy: { createdAt: 'desc' },
++    take: limit,
++    include: {
++      contact:   { select: { name: true } },
++      order:     { select: { orderNumber: true, title: true } },
++      createdBy: { select: { firstName: true, lastName: true } },
++    },
++  })
++}
++
++async function createInteraction(data) {
++  const company = await getCompany()
++  if (!company) throw new Error('Company not found')
++  const user = await prisma.user.findFirst({ where: { companyId: company.id, isActive: true } })
++  return prisma.interaction.create({
++    data: {
++      customerId:     data.customerId,
++      contactId:      data.contactId      || null,
++      orderId:        data.orderId        || null,
++      type:           data.type,
++      direction:      data.direction,
++      subject:        data.subject        || null,
++      body:           data.body           || null,
++      emailMessageId: data.emailMessageId || null,
++      createdById:    data.createdById    || user?.id || company.id,
++    },
++  })
++}
++
++module.exports = { listInteractions, createInteraction }
+-- 
+2.43.0
+
