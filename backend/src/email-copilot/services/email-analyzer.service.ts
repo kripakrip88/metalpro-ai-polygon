@@ -2,7 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { ParsedEmail, EmailAnalysis, InteractionPayload } from "../types/email.types";
 
 const CLAUDE_MODEL   = "claude-sonnet-4-6";
-const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
+const CLAUDE_API_URL = `${process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com"}/v1/messages`;
 
 const SYSTEM_PROMPT = `Ты — AI-ассистент менеджера металлообрабатывающего завода МеталлПро.
 Твоя задача — анализировать входящие письма от клиентов и помогать менеджеру отвечать.

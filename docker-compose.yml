@@ -24,6 +24,7 @@ services:
       - DATABASE_URL=postgresql://metaluser:metalpass@postgres:5432/metaldb
       - N8N_WEBHOOK_URL=http://n8n:5678/webhook
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
       - OLLAMA_URL=http://ollama:11434
       - OCR_SERVICE_URL=http://tesseract:8868
       - UPLOAD_DIR=/app/uploads
