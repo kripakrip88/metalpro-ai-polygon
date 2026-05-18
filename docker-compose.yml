@@ -27,11 +27,38 @@ services:
       - OLLAMA_URL=http://ollama:11434
       - OCR_SERVICE_URL=http://tesseract:8868
       - UPLOAD_DIR=/app/uploads
+      - REDIS_URL=redis://redis:6379
+      - ERP_METAL_URL=${ERP_METAL_URL:-http://5.35.92.112}
+      - ERP_METAL_API_TOKEN=${ERP_METAL_API_TOKEN:-}
+      - IMAP_HOST=${IMAP_HOST:-imap.mail.ru}
+      - IMAP_PORT=${IMAP_PORT:-993}
+      - IMAP_USER=${IMAP_USER:-}
+      - IMAP_PASS=${IMAP_PASS:-}
+      - SMTP_HOST=${SMTP_HOST:-smtp.mail.ru}
+      - SMTP_PORT=${SMTP_PORT:-465}
     volumes:
       - uploads_data:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - metalnet
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     networks:
       - metalnet
     restart: unless-stopped
@@ -108,3 +135,4 @@ volumes:
   n8n_data:
   ollama_data:
   uploads_data:
+  redis_data:
