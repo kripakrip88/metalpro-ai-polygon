@@ -1,0 +1,101 @@
+{
+  "name": "OCR Pipeline - Tesseract",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "ocr-trigger",
+        "httpMethod": "POST",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-0001-0001-000000000001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300],
+      "webhookId": "ocr-trigger"
+    },
+    {
+      "parameters": {
+        "filePath": "={{ $json.body.storagePath }}",
+        "dataPropertyName": "file"
+      },
+      "id": "a1b2c3d4-0001-0001-0001-000000000002",
+      "name": "Read PDF",
+      "type": "n8n-nodes-base.readBinaryFile",
+      "typeVersion": 1,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://tesseract:8868/ocr",
+        "sendBody": true,
+        "bodyContentType": "multipart-form-data",
+        "sendBinaryData": true,
+        "binaryPropertyName": "file",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-0001-0001-000000000003",
+      "name": "Tesseract OCR",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [640, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "const body = $('Webhook').item.json.body;\nconst documentId = body.documentId;\nconst callbackUrl = body.callbackUrl;\n\nlet payload;\nif ($input.item.error) {\n  payload = {\n    documentId,\n    success: false,\n    error: $input.item.error.message || 'Tesseract OCR failed'\n  };\n} else {\n  const ocr = $input.item.json;\n  payload = {\n    documentId,\n    success: true,\n    rawOcrText: ocr.text,\n    ocrEngine: ocr.engine,\n    ocrConfidence: ocr.confidence,\n    ocrPageCount: ocr.page_count,\n    ocrDurationMs: ocr.duration_ms,\n    ocrLanguage: ocr.language\n  };\n}\n\nreturn [{ json: { payload, callbackUrl } }];"
+      },
+      "id": "a1b2c3d4-0001-0001-0001-000000000004",
+      "name": "Build Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callbackUrl }}",
+        "sendBody": true,
+        "bodyContentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json.payload) }}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-0001-0001-000000000005",
+      "name": "Send Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1080, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [{"node": "Read PDF", "type": "main", "index": 0}]
+      ]
+    },
+    "Read PDF": {
+      "main": [
+        [{"node": "Tesseract OCR", "type": "main", "index": 0}]
+      ]
+    },
+    "Tesseract OCR": {
+      "main": [
+        [{"node": "Build Callback", "type": "main", "index": 0}]
+      ]
+    },
+    "Build Callback": {
+      "main": [
+        [{"node": "Send Callback", "type": "main", "index": 0}]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

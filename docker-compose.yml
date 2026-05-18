@@ -75,6 +75,7 @@ services:
       - WEBHOOK_URL=http://localhost:5678
     volumes:
       - n8n_data:/home/node/.n8n
+      - uploads_data:/app/uploads:ro
     depends_on:
       postgres:
         condition: service_healthy
