@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - 'cloudflare-worker/**'
+      - '.github/workflows/deploy-cf-worker.yml'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -31,8 +32,10 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
         run: |
           SUBDOMAIN=$(curl -sf https://api.cloudflare.com/client/v4/accounts/a17931e8615574d21c0eef43a4a0ff33/workers/subdomains \
-            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["subdomain"])')
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["subdomain"])')
           URL="https://anthropic-proxy.${SUBDOMAIN}.workers.dev"
-          echo "✅ Worker deployed!"
+          echo "============================="
           echo "ANTHROPIC_BASE_URL=${URL}"
+          echo "============================="
           echo "${URL}" >> $GITHUB_STEP_SUMMARY
