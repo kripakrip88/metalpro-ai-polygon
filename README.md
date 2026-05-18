@@ -6,7 +6,7 @@ AI-модуль для ERP/MES системы металлоконструкци
 - Backend: NestJS + TypeScript
 - Database: PostgreSQL
 - AI: Claude API + Llama (Ollama)
-- OCR: PaddleOCR
+- OCR: Tesseract (rus+eng)
 - Orchestration: n8n
 
 ## Этапы реализации
