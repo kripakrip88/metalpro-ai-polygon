@@ -25,7 +25,7 @@ services:
       - N8N_WEBHOOK_URL=http://n8n:5678/webhook
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - OLLAMA_URL=http://ollama:11434
-      - OCR_SERVICE_URL=http://paddleocr:8868
+      - OCR_SERVICE_URL=http://tesseract:8868
       - UPLOAD_DIR=/app/uploads
     volumes:
       - uploads_data:/app/uploads
@@ -78,6 +78,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - metalnet
+    restart: unless-stopped
+
+  tesseract:
+    build: ./tesseract
+    container_name: tesseract
     networks:
       - metalnet
     restart: unless-stopped
