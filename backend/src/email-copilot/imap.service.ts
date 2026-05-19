@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ImapFlow } from "imapflow";
+import { simpleParser } from "mailparser";
 
 export interface RawEmail {
   messageId: string;
@@ -37,14 +38,29 @@ export class ImapService {
         const since = sinceDate ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
         for await (const msg of client.fetch({ since }, { envelope: true, source: true })) {
           try {
-            const source = msg.source?.toString("utf-8") ?? "";
+            const parsed = await simpleParser(msg.source);
+            const text = (parsed.text ?? parsed.html ?? "").toString()
+              .replace(/<[^>]+>/g, " ")
+              .replace(/\s+/g, " ")
+              .trim()
+              .slice(0, 5000);
+
+            const from = parsed.from?.value?.[0]?.address
+              ?? msg.envelope?.from?.[0]?.address ?? "";
+            const to = parsed.to
+              ? (Array.isArray(parsed.to) ? parsed.to : [parsed.to])
+                  .flatMap((a: any) => a.value ?? [])
+                  .map((a: any) => a.address)
+                  .filter(Boolean)[0] ?? ""
+              : msg.envelope?.to?.[0]?.address ?? "";
+
             emails.push({
-              messageId: msg.envelope?.messageId ?? `uid-${msg.uid}`,
-              fromAddress: msg.envelope?.from?.[0]?.address ?? "",
-              toAddress: msg.envelope?.to?.[0]?.address ?? "",
-              subject: msg.envelope?.subject ?? "(без темы)",
-              bodyText: this.extractBody(source),
-              receivedAt: msg.envelope?.date ?? new Date(),
+              messageId: (parsed.messageId ?? msg.envelope?.messageId ?? `uid-${msg.uid}`).replace(/[<>]/g, ""),
+              fromAddress: from,
+              toAddress: to,
+              subject: parsed.subject ?? msg.envelope?.subject ?? "(без темы)",
+              bodyText: text || "(пустое письмо)",
+              receivedAt: parsed.date ?? msg.envelope?.date ?? new Date(),
             });
           } catch (e: any) {
             this.logger.warn(`Skip msg ${msg.uid}: ${e.message}`);
@@ -58,17 +74,5 @@ export class ImapService {
     }
     this.logger.log(`Fetched ${emails.length} emails`);
     return emails;
-  }
-
-  private extractBody(raw: string): string {
-    const bodyStart = raw.indexOf("\r\n\r\n");
-    const body = bodyStart >= 0 ? raw.slice(bodyStart + 4) : raw;
-    return body
-      .replace(/=\r\n/g, "")
-      .replace(/=[0-9A-Fa-f]{2}/g, (m) => String.fromCharCode(parseInt(m.slice(1), 16)))
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 5000);
   }
 }
