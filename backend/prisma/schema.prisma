@@ -1,0 +1,36 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model EmailMessage {
+  id           String   @id @default(uuid())
+  messageId    String   @unique
+  threadId     String?
+  fromAddress  String
+  toAddress    String
+  subject      String
+  bodyText     String
+  receivedAt   DateTime
+
+  aiIntent     String?
+  aiPriority   String?
+  aiConfidence Float?
+  aiSummary    String?
+  aiExtracted  Json?
+  aiDrafts     Json?
+  aiSuggestRfq Boolean  @default(false)
+  aiModelUsed  String?
+
+  status    String   @default("pending")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([aiIntent])
+  @@map("email_messages")
+}
