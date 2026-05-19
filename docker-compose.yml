@@ -11,6 +11,11 @@ services:
       - N8N_WEBHOOK_URL=http://n8n:5678/webhook
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL}
+      - IMAP_HOST=${IMAP_HOST}
+      - IMAP_USER=${IMAP_USER}
+      - IMAP_PASS=${IMAP_PASS}
+      - SMTP_HOST=${SMTP_HOST}
+      - ERP_METAL_URL=${ERP_METAL_URL}
       - OLLAMA_URL=http://ollama:11434
       - OCR_SERVICE_URL=http://tesseract:8868
       - UPLOAD_DIR=/app/uploads
