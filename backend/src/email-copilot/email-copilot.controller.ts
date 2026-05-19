@@ -16,6 +16,12 @@ export class EmailCopilotController {
     return this.service.pollNewEmails();
   }
 
+  @Post("analyze/:id")
+  @HttpCode(HttpStatus.OK)
+  analyze(@Param("id") id: string) {
+    return this.service.analyzeOne(id);
+  }
+
   @Post("reply")
   @HttpCode(HttpStatus.OK)
   reply(@Body() body: { messageId: string; replyBody: string; sentBy: string }) {

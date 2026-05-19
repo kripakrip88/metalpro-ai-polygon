@@ -39,9 +39,25 @@ export class ImapService {
         for await (const msg of client.fetch({ since }, { envelope: true, source: true })) {
           try {
             const parsed = await simpleParser(msg.source);
-            const text = (parsed.text ?? parsed.html ?? "").toString()
-              .replace(/<[^>]+>/g, " ")
-              .replace(/\s+/g, " ")
+
+            let raw: string;
+            if (parsed.text) {
+              raw = parsed.text;
+            } else {
+              raw = (parsed.html ?? "").toString()
+                .replace(/<br\s*\/?>/gi, "\n")
+                .replace(/<\/p>/gi, "\n\n")
+                .replace(/<[^>]+>/g, "")
+                .replace(/&nbsp;/g, " ")
+                .replace(/&amp;/g, "&")
+                .replace(/&lt;/g, "<")
+                .replace(/&gt;/g, ">");
+            }
+            const text = raw
+              .replace(/\r\n/g, "\n")
+              .replace(/[ \t]+/g, " ")
+              .replace(/\n[ \t]+/g, "\n")
+              .replace(/\n{3,}/g, "\n\n")
               .trim()
               .slice(0, 5000);
 

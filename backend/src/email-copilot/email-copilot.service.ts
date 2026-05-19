@@ -46,6 +46,13 @@ export class EmailCopilotService {
     return { received: newCount, total: emails.length };
   }
 
+  async analyzeOne(id: string) {
+    const msg = await this.repo.findById(id);
+    if (!msg) throw new NotFoundException("Message not found");
+    const analysis = await this.ai.analyzeEmail(msg.subject, msg.bodyText, msg.fromAddress);
+    return this.repo.updateAnalysis(id, analysis);
+  }
+
   async replyToEmail(data: { messageId: string; replyBody: string; sentBy: string }) {
     const msg = await this.repo.findByMessageId(data.messageId);
     if (!msg) throw new NotFoundException("Message not found");
