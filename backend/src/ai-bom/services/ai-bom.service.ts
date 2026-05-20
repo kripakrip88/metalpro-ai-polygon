@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, ConflictException, NotFoundException, Logger } from "@nestjs/common";
+import { Injectable, ConflictException, NotFoundException, Logger } from "@nestjs/common";
 import { DocumentRepository } from "../repositories/document.repository";
 import { ExtractionResultRepository } from "../repositories/extraction-result.repository";
 import { ExtractionRunRepository } from "../repositories/extraction-run.repository";
@@ -13,6 +13,7 @@ import { ProcessingLockService } from "./processing-lock.service";
 import { ExtractionOrchestratorService } from "./extraction-orchestrator.service";
 import { ConfirmBomDto } from "../dto/confirm-bom.dto";
 import { AiDocumentStatus } from "../types/ai-document-status.enum";
+import { PrismaService } from "../../prisma/prisma.service";
 
 const MAX_RETRY_COUNT = 3;
 const OCR_TERMINAL_STATUSES = new Set([
@@ -25,6 +26,7 @@ export class AiBomService {
   private readonly logger = new Logger(AiBomService.name);
 
   constructor(
+    private readonly prisma: PrismaService,
     private readonly documentRepo: DocumentRepository,
     private readonly extractionRepo: ExtractionResultRepository,
     private readonly correctionsRepo: CorrectionsRepository,
@@ -111,16 +113,61 @@ export class AiBomService {
   async confirmBom(documentId: string, dto: ConfirmBomDto) {
     const document = await this.documentRepo.findById(documentId);
     if (!document) throw new NotFoundException(`Document ${documentId} not found`);
-    for (const item of dto.items) {
-      const result = await this.extractionRepo.findById(item.extractionResultId).catch(() => null);
-      if (!result || result.documentId !== documentId) continue;
-      const hasCorrection = item.correctedName !== result.normalizedName || item.correctedQty !== result.quantity || item.correctedUnit !== result.unit;
-      if (hasCorrection || item.rejected) {
-        await this.correctionsRepo.create({ documentId, extractionResultId: item.extractionResultId, aiRawText: result.rawText, aiSuggestedName: result.normalizedName, aiSuggestedQty: result.quantity, aiSuggestedUnit: result.unit, aiSource: result.source, correctedName: item.correctedName, correctedQty: item.correctedQty, correctedUnit: item.correctedUnit, correctionType: item.rejected ? "rejection" : "correction", correctedBy: dto.confirmedBy });
+
+    const results = await Promise.all(
+      dto.items.map(item => this.extractionRepo.findById(item.extractionResultId).catch(() => null))
+    );
+
+    await this.prisma.$transaction(async (tx) => {
+      for (let i = 0; i < dto.items.length; i++) {
+        const item = dto.items[i];
+        const result = results[i];
+        if (!result || result.documentId !== documentId) continue;
+
+        const hasCorrection = item.correctedName !== result.normalizedName
+          || item.correctedQty !== result.quantity
+          || item.correctedUnit !== result.unit;
+
+        if (hasCorrection || item.rejected) {
+          await tx.correction.create({
+            data: {
+              documentId,
+              extractionResultId: item.extractionResultId,
+              aiRawText: result.rawText,
+              aiSuggestedName: result.normalizedName,
+              aiSuggestedQty: result.quantity,
+              aiSuggestedUnit: result.unit,
+              aiSource: result.source,
+              correctedName: item.correctedName,
+              correctedQty: item.correctedQty,
+              correctedUnit: item.correctedUnit,
+              correctionType: item.rejected ? "rejection" : "correction",
+              correctedBy: dto.confirmedBy,
+            },
+          });
+        }
+
+        await tx.extractionResult.update({
+          where: { id: item.extractionResultId },
+          data: {
+            status: item.rejected ? "rejected" : "confirmed",
+            userCorrectedName: item.correctedName,
+            userCorrectedQty: item.correctedQty,
+            userCorrectedUnit: item.correctedUnit,
+            userNotes: item.notes,
+            confirmedBy: dto.confirmedBy,
+            confirmedAt: new Date(),
+            updatedAt: new Date(),
+          },
+        });
       }
-      await this.extractionRepo.confirm(item.extractionResultId, { status: item.rejected ? "rejected" : "confirmed", userCorrectedName: item.correctedName, userCorrectedQty: item.correctedQty, userCorrectedUnit: item.correctedUnit, userNotes: item.notes, confirmedBy: dto.confirmedBy });
-    }
-    await this.documentRepo.updateStatus(documentId, AiDocumentStatus.CONFIRMED, { confirmedBy: dto.confirmedBy, confirmedAt: new Date() });
+
+      await tx.document.update({
+        where: { id: documentId },
+        data: { status: AiDocumentStatus.CONFIRMED, confirmedBy: dto.confirmedBy, confirmedAt: new Date() },
+      });
+    });
+
     this.logger.log(`BOM confirmed: ${documentId}`);
     return { success: true, documentId };
   }

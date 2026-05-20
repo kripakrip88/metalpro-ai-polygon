@@ -1,0 +1,1 @@
+-- Baseline: tables already created via database/migrations/001-004_*.sql

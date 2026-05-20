@@ -8,6 +8,258 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Document {
+  id                      String    @id @default(uuid())
+  storageProvider         String    @default("local") @map("storage_provider")
+  storagePath             String    @map("storage_path")
+  originalFilename        String    @map("original_filename")
+  mimeType                String    @default("application/pdf") @map("mime_type")
+  fileSizeBytes           BigInt?   @map("file_size_bytes")
+  status                  String    @default("uploaded")
+  ocrText                 String?   @map("ocr_text")
+  rawOcrText              String?   @map("raw_ocr_text")
+  cleanedOcrText          String?   @map("cleaned_ocr_text")
+  ocrConfidence           Decimal?  @db.Decimal(5, 4) @map("ocr_confidence")
+  ocrPageCount            Int?      @map("ocr_page_count")
+  ocrDurationMs           Int?      @map("ocr_duration_ms")
+  ocrEngine               String?   @map("ocr_engine")
+  ocrStartedAt            DateTime? @map("ocr_started_at")
+  ocrCompletedAt          DateTime? @map("ocr_completed_at")
+  ocrMetadata             Json?     @map("ocr_metadata")
+  ocrPreprocessingVersion String?   @map("ocr_preprocessing_version")
+  claudeResult            Json?     @map("claude_result")
+  claudeModel             String?   @map("claude_model")
+  claudePromptVersion     String?   @map("claude_prompt_version")
+  claudeStartedAt         DateTime? @map("claude_started_at")
+  claudeCompletedAt       DateTime? @map("claude_completed_at")
+  llamaResult             Json?     @map("llama_result")
+  llamaModel              String?   @map("llama_model")
+  llamaPromptVersion      String?   @map("llama_prompt_version")
+  llamaStartedAt          DateTime? @map("llama_started_at")
+  llamaCompletedAt        DateTime? @map("llama_completed_at")
+  llamaFailedAt           DateTime? @map("llama_failed_at")
+  llamaError              String?   @map("llama_error")
+  processingError         String?   @map("processing_error")
+  failedAt                DateTime? @map("failed_at")
+  n8nExecutionId          String?   @map("n8n_execution_id")
+  confirmedBy             String?   @map("confirmed_by")
+  confirmedAt             DateTime? @map("confirmed_at")
+  createdBy               String?   @map("created_by")
+  deletedAt               DateTime? @map("deleted_at")
+  sha256Checksum          String?   @unique @map("sha256_checksum")
+  retryCount              Int       @default(0) @map("retry_count")
+  lastRetryAt             DateTime? @map("last_retry_at")
+  processingLockedAt      DateTime? @map("processing_locked_at")
+  processingLockOwner     String?   @map("processing_lock_owner")
+  aiQueuedAt              DateTime? @map("ai_queued_at")
+  aiStartedAt             DateTime? @map("ai_started_at")
+  aiCompletedAt           DateTime? @map("ai_completed_at")
+  aiFailedAt              DateTime? @map("ai_failed_at")
+  aiError                 String?   @map("ai_error")
+  createdAt               DateTime  @default(now()) @map("created_at")
+  updatedAt               DateTime  @updatedAt @map("updated_at")
+
+  extractionRuns    ExtractionRun[]
+  extractionItems   ExtractionItem[]
+  extractionResults ExtractionResult[]
+  corrections       Correction[]
+  unparsedFragments UnparsedFragment[]
+
+  @@map("ai_documents")
+}
+
+model MaterialDictionary {
+  id             String    @id @default(uuid())
+  normalizedName String    @unique @map("normalized_name")
+  aliases        String[]
+  materialGroup  String?   @map("material_group")
+  unit           String?
+  gost           String?
+  steelGrade     String?   @map("steel_grade")
+  dimensions     Json?
+  supplierMapping Json     @default("{}") @map("supplier_mapping")
+  active         Boolean   @default(true)
+  deletedAt      DateTime? @map("deleted_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  extractionResults ExtractionResult[]
+  supplierAliases   SupplierAlias[]
+
+  @@map("materials_dictionary")
+}
+
+model ExtractionResult {
+  id                 String    @id @default(uuid())
+  documentId         String    @map("document_id")
+  rawText            String    @map("raw_text")
+  source             String    @default("claude")
+  modelVersion       String?   @map("model_version")
+  promptVersion      String?   @map("prompt_version")
+  materialId         String?   @map("material_id")
+  normalizedName     String?   @map("normalized_name")
+  materialGrade      String?   @map("material_grade")
+  quantity           Decimal?  @db.Decimal(12, 3)
+  unit               String?
+  dimensions         Json?
+  confidenceScore    Decimal?  @db.Decimal(5, 4) @map("confidence_score")
+  status             String    @default("draft")
+  userCorrectedName  String?   @map("user_corrected_name")
+  userCorrectedQty   Decimal?  @db.Decimal(12, 3) @map("user_corrected_qty")
+  userCorrectedUnit  String?   @map("user_corrected_unit")
+  userNotes          String?   @map("user_notes")
+  confirmedBy        String?   @map("confirmed_by")
+  confirmedAt        DateTime? @map("confirmed_at")
+  deletedAt          DateTime? @map("deleted_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  document           Document           @relation(fields: [documentId], references: [id])
+  materialDictionary MaterialDictionary? @relation(fields: [materialId], references: [id])
+  corrections        Correction[]
+
+  @@map("ai_extraction_results")
+}
+
+model Correction {
+  id                 String    @id @default(uuid())
+  documentId         String    @map("document_id")
+  extractionResultId String?   @map("extraction_result_id")
+  aiRawText          String    @map("ai_raw_text")
+  aiSuggestedName    String?   @map("ai_suggested_name")
+  aiSuggestedQty     Decimal?  @db.Decimal(12, 3) @map("ai_suggested_qty")
+  aiSuggestedUnit    String?   @map("ai_suggested_unit")
+  aiSource           String?   @map("ai_source")
+  aiModelVersion     String?   @map("ai_model_version")
+  aiPromptVersion    String?   @map("ai_prompt_version")
+  aiConfidence       Decimal?  @db.Decimal(5, 4) @map("ai_confidence")
+  correctedName      String?   @map("corrected_name")
+  correctedQty       Decimal?  @db.Decimal(12, 3) @map("corrected_qty")
+  correctedUnit      String?   @map("corrected_unit")
+  correctionType     String    @map("correction_type")
+  correctedBy        String?   @map("corrected_by")
+  createdAt          DateTime  @default(now()) @map("created_at")
+
+  document         Document          @relation(fields: [documentId], references: [id])
+  extractionResult ExtractionResult? @relation(fields: [extractionResultId], references: [id])
+
+  @@map("ai_corrections")
+}
+
+model Supplier {
+  id        String    @id @default(uuid())
+  name      String    @unique
+  shortName String?   @map("short_name")
+  website   String?
+  notes     String?
+  active    Boolean   @default(true)
+  deletedAt DateTime? @map("deleted_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  aliases SupplierAlias[]
+
+  @@map("suppliers")
+}
+
+model SupplierAlias {
+  id           String    @id @default(uuid())
+  supplierId   String    @map("supplier_id")
+  materialId   String    @map("material_id")
+  supplierName String    @map("supplier_name")
+  supplierSku  String?   @map("supplier_sku")
+  documentType String?   @map("document_type")
+  active       Boolean   @default(true)
+  deletedAt    DateTime? @map("deleted_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  supplier           Supplier           @relation(fields: [supplierId], references: [id])
+  materialDictionary MaterialDictionary @relation(fields: [materialId], references: [id])
+
+  @@unique([supplierId, supplierName])
+  @@map("supplier_aliases")
+}
+
+model ExtractionRun {
+  id                      String    @id @default(uuid())
+  documentId              String    @map("document_id")
+  modelProvider           String    @map("model_provider")
+  modelVersion            String    @map("model_version")
+  extractionSchemaVersion String    @default("v1.0") @map("extraction_schema_version")
+  promptSnapshot          Json      @map("prompt_snapshot")
+  rawResponse             String    @default("") @map("raw_response")
+  parsedJson              Json?     @map("parsed_json")
+  status                  String    @default("queued")
+  tokensInput             Int?      @map("tokens_input")
+  tokensOutput            Int?      @map("tokens_output")
+  startedAt               DateTime? @map("started_at")
+  completedAt             DateTime? @map("completed_at")
+  durationMs              Int?      @map("duration_ms")
+  errorMessage            String?   @map("error_message")
+  memoryUsageMb           Int?      @map("memory_usage_mb")
+  inputWasTruncated       Boolean   @default(false) @map("input_was_truncated")
+  inputCharsSent          Int?      @map("input_chars_sent")
+  itemsExtracted          Int?      @map("items_extracted")
+  fragmentsCount          Int?      @map("fragments_count")
+  createdAt               DateTime  @default(now()) @map("created_at")
+
+  document          Document              @relation(fields: [documentId], references: [id])
+  extractionItems   ExtractionItem[]
+  unparsedFragments UnparsedFragment[]
+  telemetry         ExtractionTelemetry[]
+
+  @@map("ai_extraction_runs")
+}
+
+model ExtractionTelemetry {
+  id              String   @id @default(uuid())
+  extractionRunId String   @map("extraction_run_id")
+  documentId      String   @map("document_id")
+  eventType       String   @map("event_type")
+  modelProvider   String   @map("model_provider")
+  modelVersion    String?  @map("model_version")
+  eventData       Json?    @map("event_data")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  extractionRun ExtractionRun @relation(fields: [extractionRunId], references: [id])
+
+  @@map("ai_extraction_telemetry")
+}
+
+model ExtractionItem {
+  id                   String   @id @default(uuid())
+  extractionRunId      String   @map("extraction_run_id")
+  documentId           String   @map("document_id")
+  rawText              String   @map("raw_text")
+  fieldsWithConfidence Json     @map("fields_with_confidence")
+  itemConfidence       Decimal? @db.Decimal(5, 4) @map("item_confidence")
+  pageNumber           Int?     @map("page_number")
+  lineNumber           Int?     @map("line_number")
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  extractionRun ExtractionRun @relation(fields: [extractionRunId], references: [id])
+  document      Document      @relation(fields: [documentId], references: [id])
+
+  @@map("ai_extraction_items")
+}
+
+model UnparsedFragment {
+  id              String   @id @default(uuid())
+  extractionRunId String   @map("extraction_run_id")
+  documentId      String   @map("document_id")
+  rawText         String   @map("raw_text")
+  reason          String?
+  pageNumber      Int?     @map("page_number")
+  lineNumber      Int?     @map("line_number")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  extractionRun ExtractionRun @relation(fields: [extractionRunId], references: [id])
+  document      Document      @relation(fields: [documentId], references: [id])
+
+  @@map("ai_unparsed_fragments")
+}
+
 model EmailMessage {
   id           String   @id @default(uuid())
   messageId    String   @unique

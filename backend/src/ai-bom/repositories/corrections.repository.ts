@@ -1,7 +1,18 @@
 import { Injectable } from "@nestjs/common";
+import { PrismaService } from "../../prisma/prisma.service";
 
 @Injectable()
 export class CorrectionsRepository {
-  async create(data: any) { throw new Error("Not implemented"); }
-  async findByDocumentId(documentId: string) { throw new Error("Not implemented"); }
+  constructor(private readonly prisma: PrismaService) {}
+
+  create(data: any) {
+    return this.prisma.correction.create({ data });
+  }
+
+  findByDocumentId(documentId: string) {
+    return this.prisma.correction.findMany({
+      where: { documentId },
+      orderBy: { createdAt: "desc" },
+    });
+  }
 }
