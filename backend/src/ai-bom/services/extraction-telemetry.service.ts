@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { PrismaService } from "../../prisma/prisma.service";
 
 export type TelemetryEventType =
   | "api_call_started" | "api_call_completed" | "api_call_failed"
@@ -19,6 +20,8 @@ export interface TelemetryEvent {
 export class ExtractionTelemetryService {
   private readonly logger = new Logger(ExtractionTelemetryService.name);
 
+  constructor(private readonly prisma: PrismaService) {}
+
   record(event: TelemetryEvent): void {
     this.persist(event).catch(err =>
       this.logger.error(`Telemetry write failed: ${event.eventType} — ${err.message}`)
@@ -26,8 +29,16 @@ export class ExtractionTelemetryService {
   }
 
   private async persist(event: TelemetryEvent): Promise<void> {
-    // TODO: connect TelemetryRepository
-    this.logger.debug(`[telemetry] ${event.modelProvider} ${event.eventType} run:${event.extractionRunId}`);
+    await this.prisma.extractionTelemetry.create({
+      data: {
+        extractionRunId: event.extractionRunId,
+        documentId:      event.documentId,
+        eventType:       event.eventType,
+        modelProvider:   event.modelProvider,
+        modelVersion:    event.modelVersion ?? null,
+        eventData:       event.eventData ?? {},
+      },
+    });
   }
 
   apiCallStarted(p: { extractionRunId: string; documentId: string; modelProvider: string; modelVersion?: string; charsSent: number; wasTruncated: boolean }): void {
@@ -39,7 +50,10 @@ export class ExtractionTelemetryService {
   }
 
   apiCallFailed(p: { extractionRunId: string; documentId: string; modelProvider: string; errorType: string; error: string; durationMs: number }): void {
-    const eventType: TelemetryEventType = p.errorType === "timeout" ? "model_timeout" : p.errorType === "oom" ? "model_oom" : p.errorType === "model_not_found" ? "model_not_found" : "api_call_failed";
+    const eventType: TelemetryEventType = p.errorType === "timeout" ? "model_timeout"
+      : p.errorType === "oom" ? "model_oom"
+      : p.errorType === "model_not_found" ? "model_not_found"
+      : "api_call_failed";
     this.record({ extractionRunId: p.extractionRunId, documentId: p.documentId, modelProvider: p.modelProvider, eventType, eventData: { error: p.error, duration_ms: p.durationMs } });
   }
 
