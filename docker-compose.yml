@@ -8,6 +8,7 @@ services:
       - "4000:4000"
     environment:
       - DATABASE_URL=postgresql://metaluser:metalpass@postgres:5432/metaldb
+      - REDIS_URL=redis://redis:6379
       - N8N_WEBHOOK_URL=http://n8n:5678/webhook
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL}
@@ -19,10 +20,12 @@ services:
       - OLLAMA_URL=http://ollama:11434
       - OCR_SERVICE_URL=http://tesseract:8868
       - UPLOAD_DIR=/app/uploads
+      - JWT_SECRET=${JWT_SECRET}
+      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:3000}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - NODE_ENV=${NODE_ENV:-production}
     volumes:
       - uploads_data:/app/uploads
-    environment:
-      - REDIS_URL=redis://redis:6379
     depends_on:
       postgres:
         condition: service_healthy
@@ -63,6 +66,28 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - metalnet
+    restart: unless-stopped
+
+  # Scheduled database backup — runs daily at 02:00
+  # Manual run: docker compose run --rm backup
+  backup:
+    image: postgres:15-alpine
+    environment:
+      - DATABASE_URL=postgresql://metaluser:metalpass@postgres:5432/metaldb
+      - BACKUP_DIR=/backups
+      - BACKUP_KEEP_DAYS=7
+    volumes:
+      - ./scripts/backup.sh:/usr/local/bin/backup.sh:ro
+      - backups_data:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "echo '0 2 * * * DATABASE_URL=postgresql://metaluser:metalpass@postgres:5432/metaldb BACKUP_DIR=/backups BACKUP_KEEP_DAYS=7 /usr/local/bin/backup.sh >> /var/log/backup.log 2>&1' | crontab -
+      && crond -f -l 8"
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - metalnet
     restart: unless-stopped
@@ -120,3 +145,4 @@ volumes:
   n8n_data:
   ollama_data:
   uploads_data:
+  backups_data:
