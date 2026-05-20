@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { MulterModule } from "@nestjs/platform-express";
+import { BullModule } from "@nestjs/bullmq";
 import { diskStorage } from "multer";
 import { extname } from "path";
 import { v4 as uuidv4 } from "uuid";
@@ -23,6 +24,9 @@ import { UnparsedFragmentRepository } from "./repositories/unparsed-fragment.rep
 import { MaterialsDictionaryRepository } from "./repositories/materials-dictionary.repository";
 import { CorrectionsRepository } from "./repositories/corrections.repository";
 import { SupplierRepository } from "./repositories/supplier.repository";
+import { OcrProcessor } from "./queues/ocr.processor";
+import { AiExtractionProcessor } from "./queues/ai-extraction.processor";
+import { QUEUE_NAMES } from "./queues/queue-names.constant";
 
 const UPLOAD_DEST = process.env.UPLOAD_DIR ?? "./uploads";
 
@@ -35,6 +39,12 @@ const UPLOAD_DEST = process.env.UPLOAD_DIR ?? "./uploads";
       }),
       limits: { fileSize: 50 * 1024 * 1024, files: 1 },
     }),
+    BullModule.registerQueue(
+      { name: QUEUE_NAMES.OCR_PROCESSING },
+      { name: QUEUE_NAMES.AI_EXTRACTION },
+      { name: QUEUE_NAMES.MATERIAL_NORMALIZATION },
+      { name: QUEUE_NAMES.NOTIFICATIONS },
+    ),
   ],
   controllers: [AiBomController],
   providers: [
@@ -45,6 +55,7 @@ const UPLOAD_DEST = process.env.UPLOAD_DIR ?? "./uploads";
     DocumentRepository, ExtractionResultRepository, ExtractionRunRepository,
     ExtractionItemRepository, UnparsedFragmentRepository,
     MaterialsDictionaryRepository, CorrectionsRepository, SupplierRepository,
+    OcrProcessor, AiExtractionProcessor,
   ],
   exports: [AiBomService],
 })

@@ -1,19 +1,19 @@
 import { Injectable, ConflictException, NotFoundException, Logger } from "@nestjs/common";
+import { InjectQueue } from "@nestjs/bullmq";
+import { Queue } from "bullmq";
 import { DocumentRepository } from "../repositories/document.repository";
 import { ExtractionResultRepository } from "../repositories/extraction-result.repository";
-import { ExtractionRunRepository } from "../repositories/extraction-run.repository";
-import { ExtractionItemRepository } from "../repositories/extraction-item.repository";
-import { UnparsedFragmentRepository } from "../repositories/unparsed-fragment.repository";
-import { MaterialsDictionaryRepository } from "../repositories/materials-dictionary.repository";
 import { CorrectionsRepository } from "../repositories/corrections.repository";
 import { StorageService } from "./storage.service";
-import { N8nOrchestratorService, OcrCallbackPayload } from "./n8n-orchestrator.service";
 import { OcrPreprocessingService } from "./ocr-preprocessing.service";
 import { ProcessingLockService } from "./processing-lock.service";
-import { ExtractionOrchestratorService } from "./extraction-orchestrator.service";
 import { ConfirmBomDto } from "../dto/confirm-bom.dto";
 import { AiDocumentStatus } from "../types/ai-document-status.enum";
 import { PrismaService } from "../../prisma/prisma.service";
+import { QUEUE_NAMES, JOB_NAMES } from "../queues/queue-names.constant";
+import { OcrCallbackPayload } from "./n8n-orchestrator.service";
+import { OcrJobData } from "../queues/ocr.processor";
+import { AiExtractionJobData } from "../queues/ai-extraction.processor";
 
 const MAX_RETRY_COUNT = 3;
 const OCR_TERMINAL_STATUSES = new Set([
@@ -31,14 +31,10 @@ export class AiBomService {
     private readonly extractionRepo: ExtractionResultRepository,
     private readonly correctionsRepo: CorrectionsRepository,
     private readonly storageService: StorageService,
-    private readonly n8nOrchestrator: N8nOrchestratorService,
     private readonly ocrPreprocessing: OcrPreprocessingService,
     private readonly lockService: ProcessingLockService,
-    private readonly extractionOrchestrator: ExtractionOrchestratorService,
-    private readonly runRepo: ExtractionRunRepository,
-    private readonly itemRepo: ExtractionItemRepository,
-    private readonly fragmentRepo: UnparsedFragmentRepository,
-    private readonly materialsRepo: MaterialsDictionaryRepository,
+    @InjectQueue(QUEUE_NAMES.OCR_PROCESSING) private readonly ocrQueue: Queue<OcrJobData>,
+    @InjectQueue(QUEUE_NAMES.AI_EXTRACTION)  private readonly aiQueue: Queue<AiExtractionJobData>,
   ) {}
 
   async uploadDocument(file: Express.Multer.File) {
@@ -50,17 +46,17 @@ export class AiBomService {
     }
     const document = await this.documentRepo.create({ ...stored, status: AiDocumentStatus.UPLOADED });
     this.logger.log(`Document saved: ${document.id}`);
-    await this.startOcrProcessing(document);
-    return { documentId: document.id, status: AiDocumentStatus.OCR_PROCESSING, duplicate: false, message: "Uploaded. OCR processing async." };
+    await this.enqueueOcr(document);
+    return { documentId: document.id, status: AiDocumentStatus.OCR_PROCESSING, duplicate: false, message: "Uploaded. OCR processing queued." };
   }
 
-  async reprocessOcr(documentId: string, requestedBy?: string) {
+  async reprocessOcr(documentId: string, _requestedBy?: string) {
     const document = await this.documentRepo.findById(documentId);
     if (!document) throw new NotFoundException(`Document ${documentId} not found`);
     if (await this.lockService.isLocked(documentId)) throw new ConflictException("Document is currently being processed");
     await this.documentRepo.resetForReprocess(documentId);
-    await this.startOcrProcessing(document);
-    return { documentId, status: AiDocumentStatus.OCR_PROCESSING, message: "OCR reprocessing started." };
+    await this.enqueueOcr(document);
+    return { documentId, status: AiDocumentStatus.OCR_PROCESSING, message: "OCR reprocessing queued." };
   }
 
   async handleOcrCallback(payload: OcrCallbackPayload) {
@@ -79,7 +75,7 @@ export class AiBomService {
         await this.documentRepo.markFailed(payload.documentId, payload.error ?? "OCR failed after max retries");
       } else {
         await this.documentRepo.incrementRetry(payload.documentId);
-        await this.startOcrProcessing(document);
+        await this.enqueueOcr(document);
       }
       return { success: false };
     }
@@ -87,16 +83,17 @@ export class AiBomService {
     const { rawOcrText, cleanedOcrText, ocrPreprocessingVersion } = this.ocrPreprocessing.process(payload.rawOcrText ?? "");
     const ocrMetadata = { engine: payload.ocrEngine, confidence: payload.ocrConfidence, pages: payload.ocrPageCount, duration_ms: payload.ocrDurationMs, language: payload.ocrLanguage ?? "ru" };
 
-    await this.documentRepo.saveOcrResult(payload.documentId, { rawOcrText, cleanedOcrText, ocrMetadata, ocrPreprocessingVersion, ocrCompletedAt: new Date() });
+    await this.documentRepo.saveOcrResult(payload.documentId, { rawOcrText, cleanedOcrText, ocrMetadata, ocrPreprocessingVersion });
     await this.lockService.release(payload.documentId);
 
-    this.logger.log(`OCR complete: ${payload.documentId}`);
+    this.logger.log(`OCR complete: ${payload.documentId} — queuing AI extraction`);
 
-    // Trigger Claude + Llama in parallel (fire-and-forget)
-    const repos = { documentRepo: this.documentRepo, runRepo: this.runRepo, itemRepo: this.itemRepo, fragmentRepo: this.fragmentRepo, materialsRepo: this.materialsRepo };
-    this.extractionOrchestrator.runParallel(payload.documentId, cleanedOcrText, repos).catch(err =>
-      this.logger.error(`Extraction orchestration failed for ${payload.documentId}: ${err.message}`)
-    );
+    await this.aiQueue.add(JOB_NAMES.RUN_EXTRACTION, { documentId: payload.documentId, cleanedOcrText }, {
+      attempts: 2,
+      backoff: { type: "exponential", delay: 5000 },
+      removeOnComplete: 100,
+      removeOnFail: 200,
+    });
 
     return { success: true, skipped: false };
   }
@@ -172,11 +169,18 @@ export class AiBomService {
     return { success: true, documentId };
   }
 
-  private async startOcrProcessing(document: any) {
-    await this.documentRepo.updateStatus(document.id, AiDocumentStatus.OCR_PROCESSING, { ocrStartedAt: new Date() });
-    await this.lockService.acquire(document.id, "ocr-pipeline");
-    this.n8nOrchestrator.triggerOcrPipeline({ documentId: document.id, storagePath: document.storagePath, originalFilename: document.originalFilename }).catch(err =>
-      this.logger.error(`n8n trigger failed for ${document.id}: ${err.message}`)
-    );
+  private async enqueueOcr(document: any): Promise<void> {
+    await this.documentRepo.updateStatus(document.id, AiDocumentStatus.OCR_PROCESSING);
+    await this.ocrQueue.add(JOB_NAMES.TRIGGER_OCR, {
+      documentId: document.id,
+      storagePath: document.storagePath,
+      originalFilename: document.originalFilename,
+    }, {
+      attempts: 3,
+      backoff: { type: "exponential", delay: 3000 },
+      removeOnComplete: 50,
+      removeOnFail: 100,
+    });
+    this.logger.log(`OCR job queued: ${document.id}`);
   }
 }
