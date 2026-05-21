@@ -65,6 +65,7 @@ services:
       - DB_POSTGRESDB_SCHEMA=n8n
       - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-changeme-in-production}
       - WEBHOOK_URL=http://localhost:5678
+      - N8N_SECURE_COOKIE=false
     volumes:
       - n8n_data:/home/node/.n8n
     depends_on:
