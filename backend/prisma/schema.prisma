@@ -8,6 +8,14 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model ProcessingLock {
+  documentId String   @id
+  owner      String
+  lockedAt   DateTime
+
+  @@map("processing_locks")
+}
+
 model EmailMessage {
   id           String   @id @default(uuid())
   messageId    String   @unique
