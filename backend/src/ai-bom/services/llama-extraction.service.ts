@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { LlamaInferenceProvider } from "../providers/llama-inference.provider";
+import { LlamaInferenceProvider, LlamaFailure } from "../providers/llama-inference.provider";
 import { ClaudePromptBuilderService } from "./claude-prompt-builder.service";
 import { ExtractionTelemetryService } from "./extraction-telemetry.service";
 import { safeParseClaudeResponse, EXTRACTION_SCHEMA_VERSION } from "../schemas/claude-extraction.schema";
@@ -27,12 +27,11 @@ export class LlamaExtractionService {
 
     const inferResult = await this.llamaProvider.infer({ systemPrompt: built.systemPrompt, userPrompt: built.userPrompt, maxTokens: 4096, temperature: 0 });
 
-    if (inferResult.success) {
-      // continue below
-    } else {
-      await repos.runRepo.markFailed(run.id, inferResult.error);
-      this.telemetry.apiCallFailed({ extractionRunId: run.id, documentId, modelProvider: "llama", errorType: inferResult.errorType, error: inferResult.error, durationMs: inferResult.durationMs });
-      this.logger.warn(`Llama failed (${inferResult.errorType}): ${documentId} — document status unchanged`);
+    if (!inferResult.success) {
+      const fail = inferResult as LlamaFailure;
+      await repos.runRepo.markFailed(run.id, fail.error);
+      this.telemetry.apiCallFailed({ extractionRunId: run.id, documentId, modelProvider: "llama", errorType: fail.errorType, error: fail.error, durationMs: fail.durationMs });
+      this.logger.warn(`Llama failed (${fail.errorType}): ${documentId} — document status unchanged`);
       return { extractionRunId: run.id, status: "failed", itemCount: 0, fragmentCount: 0 };
     }
 

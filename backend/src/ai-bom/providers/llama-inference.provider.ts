@@ -3,9 +3,9 @@ import { AI_MODELS, AI_RETRY } from "../config/ai-provider.config";
 
 const OLLAMA_TIMEOUT_MS = 120_000;
 
-export type LlamaInferenceResult =
-  | { success: true; rawResponse: string; model: string; tokensInput: number; tokensOutput: number; durationMs: number; memoryUsageMb: number | null; attempts: number }
-  | { success: false; error: string; errorType: "timeout" | "oom" | "model_not_found" | "network" | "unknown"; durationMs: number };
+export type LlamaSuccess = { success: true; rawResponse: string; model: string; tokensInput: number; tokensOutput: number; durationMs: number; memoryUsageMb: number | null; attempts: number };
+export type LlamaFailure = { success: false; error: string; errorType: "timeout" | "oom" | "model_not_found" | "network" | "unknown"; durationMs: number };
+export type LlamaInferenceResult = LlamaSuccess | LlamaFailure;
 
 @Injectable()
 export class LlamaInferenceProvider {
@@ -23,10 +23,11 @@ export class LlamaInferenceProvider {
       if (result.success) {
         return { ...result, durationMs: totalDurationMs, attempts: attempt };
       } else {
-        lastResult = { ...result, durationMs: totalDurationMs };
-        this.logger.warn(`Llama attempt ${attempt}/${AI_RETRY.maxRetries} failed (${result.errorType}): ${result.error}`);
+        const fail = result as LlamaFailure;
+        lastResult = { ...fail, durationMs: totalDurationMs };
+        this.logger.warn(`Llama attempt ${attempt}/${AI_RETRY.maxRetries} failed (${fail.errorType}): ${fail.error}`);
 
-        if (result.errorType === "model_not_found") break;
+        if (fail.errorType === "model_not_found") break;
 
         if (attempt < AI_RETRY.maxRetries) {
           const delayMs = AI_RETRY.baseDelayMs * Math.pow(2, attempt - 1);
