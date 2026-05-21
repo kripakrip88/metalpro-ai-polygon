@@ -36,7 +36,7 @@ export class ExtractionTelemetryService {
         eventType:       event.eventType,
         modelProvider:   event.modelProvider,
         modelVersion:    event.modelVersion ?? null,
-        eventData:       event.eventData ?? {},
+        eventData:       (event.eventData ?? {}) as any,
       },
     });
   }

@@ -25,6 +25,17 @@ export class AuditService {
   }
 
   private async persist(entry: AuditEntry): Promise<void> {
-    await this.prisma.auditLog.create({ data: entry });
+    await this.prisma.auditLog.create({
+      data: {
+        userId:     entry.userId ?? null,
+        action:     entry.action,
+        entityType: entry.entityType,
+        entityId:   entry.entityId ?? null,
+        oldData:    (entry.oldData ?? null) as any,
+        newData:    (entry.newData ?? null) as any,
+        ipAddress:  entry.ipAddress ?? null,
+        userAgent:  entry.userAgent ?? null,
+      },
+    });
   }
 }

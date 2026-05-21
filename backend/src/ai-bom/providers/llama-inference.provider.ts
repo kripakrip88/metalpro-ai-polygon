@@ -20,16 +20,18 @@ export class LlamaInferenceProvider {
       const result = await this.inferOnce(input);
       totalDurationMs += result.durationMs;
 
-      if (result.success) return { ...result, durationMs: totalDurationMs, attempts: attempt };
+      if (result.success) {
+        return { ...result, durationMs: totalDurationMs, attempts: attempt };
+      } else {
+        lastResult = { ...result, durationMs: totalDurationMs };
+        this.logger.warn(`Llama attempt ${attempt}/${AI_RETRY.maxRetries} failed (${result.errorType}): ${result.error}`);
 
-      lastResult = { ...result, durationMs: totalDurationMs };
-      this.logger.warn(`Llama attempt ${attempt}/${AI_RETRY.maxRetries} failed (${result.errorType}): ${result.error}`);
+        if (result.errorType === "model_not_found") break;
 
-      if (result.errorType === "model_not_found") break;
-
-      if (attempt < AI_RETRY.maxRetries) {
-        const delayMs = AI_RETRY.baseDelayMs * Math.pow(2, attempt - 1);
-        await new Promise(resolve => setTimeout(resolve, delayMs));
+        if (attempt < AI_RETRY.maxRetries) {
+          const delayMs = AI_RETRY.baseDelayMs * Math.pow(2, attempt - 1);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
       }
     }
 

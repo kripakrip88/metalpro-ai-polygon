@@ -35,7 +35,7 @@ export class DocumentRepository {
     return this.prisma.document.update({ where: { id }, data });
   }
 
-  saveOcrResult(id: string, data: { rawOcrText?: string; cleanedOcrText?: string; ocrEngine?: string; ocrPageCount?: number }) {
+  saveOcrResult(id: string, data: { rawOcrText?: string; cleanedOcrText?: string; ocrEngine?: string; ocrPageCount?: number; ocrMetadata?: any; ocrPreprocessingVersion?: string }) {
     return this.prisma.document.update({
       where: { id },
       data: { ...data, ocrCompletedAt: new Date(), status: "ocr_done" },
