@@ -34,6 +34,10 @@
 - [feat] HierarchicalExtractionOrchestratorService — Assembly → BOM→ BOMItem pipeline, управляется через ENABLE_HIERARCHICAL_EXTRACTION
 - [feat] GET /api/ai-bom/document/:id/bom-draft — endpoint для иерархического BOM в ERP-формате
 - [feat] Feature flag ENABLE_HIERARCHICAL_EXTRACTION — новый pipeline запускается параллельно со старым только на staging, prod не затронут
+- [feat] Prisma schema — добавлены 5 моделей (ExtractedCoating, ExtractedAssembly, ExtractedBom, ExtractedBomItem, ExtractedMaterial); prisma db push при деплое создаёт таблицы автоматически
+- [feat] Репозитории подключены к Prisma (реализованы все 5 вместо стабов); Decimal→number конвертация при чтении
+- [fix] AiBomModule добавлен в AppModule — все /api/ai-bom/* эндпоинты теперь активны
+- [fix] zod добавлен в package.json dependencies (был missing, схемы не компилировались)
 
 ## 2025-05-27
 
