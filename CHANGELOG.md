@@ -24,6 +24,17 @@
 
 ---
 
+## 2026-05-28
+
+### metalpro-ai-polygon
+- [migration] 005_stage5_hierarchical_extraction.sql — 5 новых таблиц: extracted_assembly, extracted_bom, extracted_bom_item, extracted_material, extracted_coating. Additive, старые таблицы не тронуты
+- [feat] AssemblyExtractionPromptBuilder — промпт только на изделия верхнего уровня, без материалов
+- [feat] BomExtractionPromptBuilder — промпт на BOM для конкретного Assembly
+- [feat] AssemblyExtractorService, BomExtractorService — двухэтапная иерархическая экстракция
+- [feat] HierarchicalExtractionOrchestratorService — Assembly → BOM→ BOMItem pipeline, управляется через ENABLE_HIERARCHICAL_EXTRACTION
+- [feat] GET /api/ai-bom/document/:id/bom-draft — endpoint для иерархического BOM в ERP-формате
+- [feat] Feature flag ENABLE_HIERARCHICAL_EXTRACTION — новый pipeline запускается параллельно со старым только на staging, prod не затронут
+
 ## 2025-05-27
 
 ### Документация

@@ -6,11 +6,14 @@ import { ExtractionItemRepository } from "../repositories/extraction-item.reposi
 import { UnparsedFragmentRepository } from "../repositories/unparsed-fragment.repository";
 import { MaterialsDictionaryRepository } from "../repositories/materials-dictionary.repository";
 import { CorrectionsRepository } from "../repositories/corrections.repository";
+import { ExtractedAssemblyRepository } from "../repositories/extracted-assembly.repository";
+import { ExtractedBomRepository } from "../repositories/extracted-bom.repository";
 import { StorageService } from "./storage.service";
 import { N8nOrchestratorService, OcrCallbackPayload } from "./n8n-orchestrator.service";
 import { OcrPreprocessingService } from "./ocr-preprocessing.service";
 import { ProcessingLockService } from "./processing-lock.service";
 import { ExtractionOrchestratorService } from "./extraction-orchestrator.service";
+import { HierarchicalExtractionOrchestratorService } from "./hierarchical-extraction-orchestrator.service";
 import { ConfirmBomDto } from "../dto/confirm-bom.dto";
 import { AiDocumentStatus } from "../types/ai-document-status.enum";
 
@@ -33,10 +36,13 @@ export class AiBomService {
     private readonly ocrPreprocessing: OcrPreprocessingService,
     private readonly lockService: ProcessingLockService,
     private readonly extractionOrchestrator: ExtractionOrchestratorService,
+    private readonly hierarchicalOrchestrator: HierarchicalExtractionOrchestratorService,
     private readonly runRepo: ExtractionRunRepository,
     private readonly itemRepo: ExtractionItemRepository,
     private readonly fragmentRepo: UnparsedFragmentRepository,
     private readonly materialsRepo: MaterialsDictionaryRepository,
+    private readonly assemblyRepo: ExtractedAssemblyRepository,
+    private readonly bomRepo: ExtractedBomRepository,
   ) {}
 
   async uploadDocument(file: Express.Multer.File) {
@@ -96,6 +102,12 @@ export class AiBomService {
       this.logger.error(`Extraction orchestration failed for ${payload.documentId}: ${err.message}`)
     );
 
+    if (HierarchicalExtractionOrchestratorService.isEnabled()) {
+      this.hierarchicalOrchestrator.extract(payload.documentId, cleanedOcrText).catch(err =>
+        this.logger.error(`Hierarchical extraction failed for ${payload.documentId}: ${err.message}`)
+      );
+    }
+
     return { success: true, skipped: false };
   }
 
@@ -123,6 +135,51 @@ export class AiBomService {
     await this.documentRepo.updateStatus(documentId, AiDocumentStatus.CONFIRMED, { confirmedBy: dto.confirmedBy, confirmedAt: new Date() });
     this.logger.log(`BOM confirmed: ${documentId}`);
     return { success: true, documentId };
+  }
+
+  async getBomDraft(documentId: string) {
+    const document = await this.documentRepo.findById(documentId);
+    if (!document) throw new NotFoundException(`Document ${documentId} not found`);
+
+    const assemblies = await this.assemblyRepo.findByDocumentId(documentId).catch(() => []);
+
+    const result = await Promise.all(
+      assemblies.map(async (assembly) => {
+        const bom = await this.bomRepo.findByAssemblyId(assembly.id).catch(() => null);
+        const items = bom ? await this.bomRepo.findItemsByBomId(bom.id).catch(() => []) : [];
+        return {
+          id: assembly.id,
+          name: assembly.name,
+          designation: assembly.designation,
+          quantity: assembly.quantity,
+          unit: assembly.unit,
+          mass_kg: assembly.massKg,
+          source_hint: assembly.sourceHint,
+          confidence: assembly.confidence,
+          bom: bom ? {
+            id: bom.id,
+            source_hint: bom.sourceHint,
+            source_reference: bom.sourceReference,
+            items: items.map(item => ({
+              id: item.id,
+              position: item.positionNumber,
+              name: item.name,
+              profile_type: item.profileType,
+              steel_grade: item.steelGrade,
+              gost: item.gost,
+              length_mm: item.lengthMm,
+              thickness_mm: item.thicknessMm,
+              quantity: item.quantity,
+              unit: item.unit,
+              mass_total_kg: item.massTotalKg,
+              confidence: item.confidence,
+            })),
+          } : null,
+        };
+      }),
+    );
+
+    return { documentId, assemblies: result };
   }
 
   private async startOcrProcessing(document: any) {

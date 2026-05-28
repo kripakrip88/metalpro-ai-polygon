@@ -37,6 +37,11 @@ export class AiBomController {
     return this.aiBomService.confirmBom(id, dto);
   }
 
+  @Get("document/:id/bom-draft")
+  async getBomDraft(@Param("id", ParseUUIDPipe) id: string) {
+    return this.aiBomService.getBomDraft(id);
+  }
+
   @Post("internal/ocr-callback")
   @HttpCode(HttpStatus.OK)
   async ocrCallback(@Body() payload: unknown) {
