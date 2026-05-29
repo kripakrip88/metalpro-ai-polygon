@@ -4,8 +4,14 @@ import { readFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
-const ALLOWED_MIME_TYPES  = ["application/pdf"];
-const ALLOWED_EXTENSIONS  = [".pdf"];
+const ALLOWED_MIME_TYPES = [
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel",
+  "image/jpeg",
+  "image/png",
+];
+const ALLOWED_EXTENSIONS = [".pdf", ".xlsx", ".xls", ".jpg", ".jpeg", ".png"];
 
 export interface StoredFile {
   storageProvider: "local";
@@ -28,10 +34,10 @@ export class StorageService {
   validate(file: Express.Multer.File): void {
     if (!file) throw new BadRequestException("No file provided");
     if (!ALLOWED_MIME_TYPES.includes(file.mimetype))
-      throw new BadRequestException(`Invalid file type: ${file.mimetype}. Only PDF accepted.`);
+      throw new BadRequestException(`Формат не поддерживается: ${file.mimetype}. Поддерживаются: PDF, Excel, JPG, PNG.`);
     const ext = file.originalname.split(".").pop()?.toLowerCase();
     if (!ALLOWED_EXTENSIONS.includes(`.${ext}`))
-      throw new BadRequestException(`Invalid extension. Only .pdf accepted.`);
+      throw new BadRequestException(`Формат не поддерживается. Поддерживаются: .pdf, .xlsx, .xls, .jpg, .jpeg, .png`);
     if (file.size > MAX_FILE_SIZE_BYTES)
       throw new BadRequestException(`File exceeds 50 MB limit`);
   }

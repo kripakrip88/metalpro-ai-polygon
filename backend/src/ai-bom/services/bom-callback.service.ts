@@ -3,6 +3,8 @@ import { Injectable, Logger } from "@nestjs/common";
 export interface BomExtractedPayload {
   documentId: string;
   assemblyId: string;
+  erpAssemblyId?: string;
+  rfqId?: string;
   status: "completed" | "failed";
   items?: Array<{
     position?: number;

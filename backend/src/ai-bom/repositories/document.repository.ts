@@ -16,6 +16,7 @@ interface DocumentRow {
   retry_count: number;
   sha256_checksum: string | null;
   processing_error: string | null;
+  extraction_context: any | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -35,6 +36,7 @@ function toDoc(row: DocumentRow) {
     retryCount: row.retry_count ?? 0,
     sha256Checksum: row.sha256_checksum,
     processingError: row.processing_error,
+    extractionContext: row.extraction_context ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -54,13 +56,16 @@ export class DocumentRepository {
     mimeType: string;
     fileSizeBytes: number;
     sha256Checksum: string;
+    extractionContext?: any;
   }) {
+    const ctx = data.extractionContext != null ? JSON.stringify(data.extractionContext) : null;
     const rows = await this.prisma.$queryRaw<DocumentRow[]>`
       INSERT INTO ai_documents
-        (status, storage_provider, storage_path, original_filename, mime_type, file_size_bytes, sha256_checksum)
+        (status, storage_provider, storage_path, original_filename, mime_type, file_size_bytes, sha256_checksum, extraction_context)
       VALUES
         (${data.status}, ${data.storageProvider}, ${data.storagePath},
-         ${data.originalFilename}, ${data.mimeType}, ${data.fileSizeBytes}, ${data.sha256Checksum})
+         ${data.originalFilename}, ${data.mimeType}, ${data.fileSizeBytes}, ${data.sha256Checksum},
+         ${ctx}::jsonb)
       RETURNING *
     `;
     return toDoc(rows[0]);

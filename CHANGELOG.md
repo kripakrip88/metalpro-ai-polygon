@@ -24,6 +24,17 @@
 
 ---
 
+## 2026-05-29 (Step C)
+
+### metalpro-ai-polygon
+- [migration] 006_extraction_context.sql — добавлена колонка extraction_context JSONB в ai_documents для хранения контекста erp-metal assemblies
+- [feat] POST /api/ai-bom/upload-and-extract-bom — принимает file + rfqId + assemblies (JSON), сохраняет extraction_context, запускает OCR
+- [feat] StorageService — добавлена поддержка Excel (.xlsx, .xls), JPG, PNG форматов (ранее только PDF)
+- [feat] DocumentRepository — поддержка extractionContext (create + findById)
+- [feat] BomCallbackService — добавлены erpAssemblyId и rfqId в payload (для маппинга в erp-metal)
+- [feat] handleOcrCallback — ветвление: если extraction_context есть → targeted BOM extraction для каждого assembly из контекста; иначе → legacy pipeline без изменений
+- [feat] runAllContextualBomExtractions + runContextualBomExtraction — полный pipeline для upload-and-extract-bom: создаёт ExtractedAssembly, запускает BomExtractor, отправляет callback с erpAssemblyId
+
 ## 2026-05-29
 
 ### metalpro-ai-polygon

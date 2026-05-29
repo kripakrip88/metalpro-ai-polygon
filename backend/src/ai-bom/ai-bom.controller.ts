@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Param, UploadedFile, UseInterceptors, ParseUUIDPipe, HttpCode, HttpStatus, Body } from "@nestjs/common";
+import { Controller, Post, Get, Param, UploadedFile, UseInterceptors, ParseUUIDPipe, HttpCode, HttpStatus, Body, BadRequestException } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { AiBomService } from "./services/ai-bom.service";
 import { N8nOrchestratorService } from "./services/n8n-orchestrator.service";
@@ -17,6 +17,20 @@ export class AiBomController {
   @HttpCode(HttpStatus.ACCEPTED)
   async uploadDocument(@UploadedFile() file: Express.Multer.File) {
     return this.aiBomService.uploadDocument(file);
+  }
+
+  // ── Step C: BOM extraction from file with erp-metal assembly context ──────
+  @Post("upload-and-extract-bom")
+  @UseInterceptors(FileInterceptor("file"))
+  @HttpCode(HttpStatus.ACCEPTED)
+  async uploadAndExtractBom(
+    @UploadedFile() file: Express.Multer.File,
+    @Body("rfqId") rfqId: string,
+    @Body("assemblies") assembliesJson: string,
+  ) {
+    if (!rfqId) throw new BadRequestException("rfqId is required");
+    if (!assembliesJson) throw new BadRequestException("assemblies is required");
+    return this.aiBomService.uploadAndExtractBom(file, rfqId, assembliesJson);
   }
 
   @Get("documents")

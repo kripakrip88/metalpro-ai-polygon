@@ -64,6 +64,37 @@ export class AiBomService {
     return { documentId: document.id, status: AiDocumentStatus.OCR_PROCESSING, duplicate: false, message: "Uploaded. OCR processing async." };
   }
 
+  async uploadAndExtractBom(
+    file: Express.Multer.File,
+    rfqId: string,
+    assembliesJson: string,
+  ) {
+    this.storageService.validate(file);
+
+    let assemblies: Array<{ id: string; name: string; designation?: string }>;
+    try {
+      assemblies = JSON.parse(assembliesJson);
+    } catch {
+      throw new BadRequestException("assemblies must be a valid JSON string");
+    }
+
+    const stored = this.storageService.resolveStoredFile(file);
+    const existing = await this.documentRepo.findByChecksum(stored.sha256Checksum).catch(() => null);
+    if (existing) {
+      return { documentId: existing.id, duplicate: true };
+    }
+
+    const extractionContext = { rfqId, assemblies };
+    const document = await this.documentRepo.create({
+      ...stored,
+      status: AiDocumentStatus.UPLOADED,
+      extractionContext,
+    });
+    this.logger.log(`BOM document saved: ${document.id} (rfqId=${rfqId}, assemblies=${assemblies.length})`);
+    await this.startOcrProcessing(document);
+    return { documentId: document.id };
+  }
+
   async reprocessOcr(documentId: string, requestedBy?: string) {
     const document = await this.documentRepo.findById(documentId);
     if (!document) throw new NotFoundException(`Document ${documentId} not found`);
@@ -102,16 +133,27 @@ export class AiBomService {
 
     this.logger.log(`OCR complete: ${payload.documentId}`);
 
-    // Trigger Claude + Llama in parallel (fire-and-forget)
-    const repos = { documentRepo: this.documentRepo, runRepo: this.runRepo, itemRepo: this.itemRepo, fragmentRepo: this.fragmentRepo, materialsRepo: this.materialsRepo };
-    this.extractionOrchestrator.runParallel(payload.documentId, cleanedOcrText, repos).catch(err =>
-      this.logger.error(`Extraction orchestration failed for ${payload.documentId}: ${err.message}`)
-    );
-
-    if (HierarchicalExtractionOrchestratorService.isEnabled()) {
-      this.hierarchicalOrchestrator.extract(payload.documentId, cleanedOcrText).catch(err =>
-        this.logger.error(`Hierarchical extraction failed for ${payload.documentId}: ${err.message}`)
+    if (document.extractionContext) {
+      // Targeted BOM extraction per assembly from erp-metal context (upload-and-extract-bom flow)
+      const ctx = document.extractionContext as {
+        rfqId: string;
+        assemblies: Array<{ id: string; name: string; designation?: string }>;
+      };
+      this.runAllContextualBomExtractions(payload.documentId, cleanedOcrText, ctx).catch(err =>
+        this.logger.error(`Contextual BOM extraction failed for ${payload.documentId}: ${err.message}`)
       );
+    } else {
+      // Legacy pipeline — Trigger Claude + Llama in parallel (fire-and-forget)
+      const repos = { documentRepo: this.documentRepo, runRepo: this.runRepo, itemRepo: this.itemRepo, fragmentRepo: this.fragmentRepo, materialsRepo: this.materialsRepo };
+      this.extractionOrchestrator.runParallel(payload.documentId, cleanedOcrText, repos).catch(err =>
+        this.logger.error(`Extraction orchestration failed for ${payload.documentId}: ${err.message}`)
+      );
+
+      if (HierarchicalExtractionOrchestratorService.isEnabled()) {
+        this.hierarchicalOrchestrator.extract(payload.documentId, cleanedOcrText).catch(err =>
+          this.logger.error(`Hierarchical extraction failed for ${payload.documentId}: ${err.message}`)
+        );
+      }
     }
 
     return { success: true, skipped: false };
@@ -293,6 +335,75 @@ export class AiBomService {
         error: (err as Error).message,
       });
     }
+  }
+
+  private async runAllContextualBomExtractions(
+    documentId: string,
+    ocrText: string,
+    ctx: { rfqId: string; assemblies: Array<{ id: string; name: string; designation?: string }> },
+  ): Promise<void> {
+    await this.documentRepo.updateStatus(documentId, AiDocumentStatus.AI_PROCESSING);
+
+    for (const erpAssembly of ctx.assemblies) {
+      try {
+        await this.runContextualBomExtraction(documentId, ocrText, erpAssembly, ctx.rfqId);
+      } catch (err) {
+        this.logger.error(`Contextual BOM extraction failed for assembly ${erpAssembly.id}: ${(err as Error).message}`);
+        await this.bomCallback.notify({
+          documentId,
+          assemblyId: erpAssembly.id,
+          erpAssemblyId: erpAssembly.id,
+          rfqId: ctx.rfqId,
+          status: "failed",
+          error: (err as Error).message,
+        });
+      }
+    }
+
+    await this.documentRepo.updateStatus(documentId, AiDocumentStatus.AI_DONE);
+    this.logger.log(`All contextual BOM extractions complete: ${documentId}`);
+  }
+
+  private async runContextualBomExtraction(
+    documentId: string,
+    ocrText: string,
+    erpAssembly: { id: string; name: string; designation?: string },
+    rfqId: string,
+  ): Promise<void> {
+    const [savedAssembly] = await this.assemblyRepo.createMany([{
+      documentId,
+      name: erpAssembly.name,
+      designation: erpAssembly.designation,
+      quantity: 1,
+      unit: "шт.",
+      sourceHint: "erp_context",
+      confidence: 1.0,
+      rawText: erpAssembly.id,
+    }]);
+
+    const bom = await this.bomExtractor.extractForAssembly(documentId, ocrText, savedAssembly);
+
+    const items = bom ? await this.bomRepo.findItemsByBomId(bom.id).catch(() => []) : [];
+    await this.bomCallback.notify({
+      documentId,
+      assemblyId: savedAssembly.id,
+      erpAssemblyId: erpAssembly.id,
+      rfqId,
+      status: "completed",
+      items: items.map(i => ({
+        position: i.positionNumber,
+        name: i.name,
+        profileType: i.profileType,
+        steelGrade: i.steelGrade,
+        gost: i.gost,
+        lengthMm: i.lengthMm,
+        quantity: i.quantity,
+        unit: i.unit,
+        massTotalKg: i.massTotalKg,
+        confidence: i.confidence,
+      })),
+    });
+    this.logger.log(`Contextual BOM extracted: document ${documentId}, erpAssembly ${erpAssembly.id}`);
   }
 
   private async startOcrProcessing(document: any) {
