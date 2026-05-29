@@ -209,6 +209,13 @@ export class AiBomService {
     return { documentId, status: doc.status, phase, label, updatedAt: doc.updatedAt };
   }
 
+  // ── Stateless: erp-metal passes email body text, gets assemblies[] back ─
+  async extractAssembliesFromText(text: string) {
+    if (!text?.trim()) return { assemblies: [] };
+    const assemblies = await this.assemblyExtractor.extractFromText(text);
+    return { assemblies };
+  }
+
   // ── Assembly extraction (synchronous — email body is short, 3-8 sec) ───
   async extractAssemblies(documentId: string) {
     const doc = await this.documentRepo.findById(documentId);

@@ -49,6 +49,12 @@ export class AiBomController {
     return this.aiBomService.getDocumentStatus(id);
   }
 
+  // ── Stateless: erp-metal sends email text, gets nodes back (no upload needed) ─
+  @Post("extract-assemblies-from-text")
+  async extractAssembliesFromText(@Body("text") text: string) {
+    return this.aiBomService.extractAssembliesFromText(text);
+  }
+
   // ── Synchronous assembly extraction (email body, 3-8 sec) ──────────────
   @Post("document/:id/extract-assemblies")
   async extractAssemblies(@Param("id", ParseUUIDPipe) id: string) {

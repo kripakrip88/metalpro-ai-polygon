@@ -84,6 +84,30 @@ export class AssemblyExtractorService {
     return saved;
   }
 
+  // Stateless variant — no DB write, used for erp-metal direct text calls
+  async extractFromText(text: string) {
+    const built = this.promptBuilder.build({ cleanedOcrText: text, documentId: "stateless" });
+    const apiResult = await this.callClaudeApi(built.systemPrompt, built.userPrompt, built.promptSnapshot);
+
+    if (!apiResult.success) {
+      this.logger.error(`Stateless assembly extraction failed: ${apiResult.error}`);
+      return [];
+    }
+    const parseResult = safeParseAssemblyResponse(apiResult.rawResponse);
+    if (!parseResult.success) {
+      this.logger.error(`Stateless assembly parse failed: ${parseResult.error}`);
+      return [];
+    }
+    return parseResult.data.assemblies.map(a => ({
+      name: a.name,
+      designation: a.designation ?? undefined,
+      quantity: a.quantity,
+      unit: a.unit,
+      confidence: a.confidence ?? undefined,
+      rawText: a.raw_text,
+    }));
+  }
+
   private async callClaudeApi(systemPrompt: string, userPrompt: string, _snapshot: Record<string, unknown>): Promise<any> {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return { success: false, error: "ANTHROPIC_API_KEY not configured" };
