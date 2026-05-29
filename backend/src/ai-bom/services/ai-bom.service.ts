@@ -14,6 +14,9 @@ import { OcrPreprocessingService } from "./ocr-preprocessing.service";
 import { ProcessingLockService } from "./processing-lock.service";
 import { ExtractionOrchestratorService } from "./extraction-orchestrator.service";
 import { HierarchicalExtractionOrchestratorService } from "./hierarchical-extraction-orchestrator.service";
+import { AssemblyExtractorService } from "./assembly-extractor.service";
+import { BomExtractorService } from "./bom-extractor.service";
+import { BomCallbackService } from "./bom-callback.service";
 import { ConfirmBomDto } from "../dto/confirm-bom.dto";
 import { AiDocumentStatus } from "../types/ai-document-status.enum";
 
@@ -37,6 +40,9 @@ export class AiBomService {
     private readonly lockService: ProcessingLockService,
     private readonly extractionOrchestrator: ExtractionOrchestratorService,
     private readonly hierarchicalOrchestrator: HierarchicalExtractionOrchestratorService,
+    private readonly assemblyExtractor: AssemblyExtractorService,
+    private readonly bomExtractor: BomExtractorService,
+    private readonly bomCallback: BomCallbackService,
     private readonly runRepo: ExtractionRunRepository,
     private readonly itemRepo: ExtractionItemRepository,
     private readonly fragmentRepo: UnparsedFragmentRepository,
@@ -180,6 +186,106 @@ export class AiBomService {
     );
 
     return { documentId, assemblies: result };
+  }
+
+  // ── Status polling ──────────────────────────────────────────────────────
+  async getDocumentStatus(documentId: string) {
+    const doc = await this.documentRepo.findById(documentId);
+    if (!doc) throw new NotFoundException(`Document ${documentId} not found`);
+
+    const phases: Record<string, { phase: string; label: string }> = {
+      [AiDocumentStatus.UPLOADED]:       { phase: "uploading",  label: "Загрузка файла" },
+      [AiDocumentStatus.OCR_PROCESSING]: { phase: "ocr",        label: "OCR обработка" },
+      [AiDocumentStatus.OCR_DONE]:       { phase: "ocr_done",   label: "OCR обработка" },
+      [AiDocumentStatus.AI_PROCESSING]:  { phase: "extracting", label: "AI извлечение данных" },
+      [AiDocumentStatus.AI_DONE]:        { phase: "completed",  label: "Готово" },
+      [AiDocumentStatus.NORMALIZED]:     { phase: "completed",  label: "Готово" },
+      [AiDocumentStatus.CONFIRMED]:      { phase: "completed",  label: "Готово" },
+      [AiDocumentStatus.AI_FAILED]:      { phase: "error",      label: "Ошибка AI" },
+      [AiDocumentStatus.FAILED]:         { phase: "error",      label: "Ошибка" },
+    };
+
+    const { phase, label } = phases[doc.status] ?? { phase: "unknown", label: doc.status };
+    return { documentId, status: doc.status, phase, label, updatedAt: doc.updatedAt };
+  }
+
+  // ── Assembly extraction (synchronous — email body is short, 3-8 sec) ───
+  async extractAssemblies(documentId: string) {
+    const doc = await this.documentRepo.findById(documentId);
+    if (!doc) throw new NotFoundException(`Document ${documentId} not found`);
+
+    if (!doc.cleanedOcrText) {
+      return { documentId, assemblies: [], message: "OCR not completed yet — retry after status is ocr_done" };
+    }
+
+    const assemblies = await this.assemblyExtractor.extract(documentId, doc.cleanedOcrText);
+    return {
+      documentId,
+      assemblies: assemblies.map(a => ({
+        id: a.id,
+        name: a.name,
+        designation: a.designation,
+        quantity: a.quantity,
+        unit: a.unit,
+        confidence: a.confidence,
+        rawText: a.rawText,
+      })),
+    };
+  }
+
+  // ── BOM extraction (async — OCR + AI up to 80 sec, callback to erp-metal) ──
+  async triggerBomExtraction(documentId: string, assemblyId: string) {
+    const doc = await this.documentRepo.findById(documentId);
+    if (!doc) throw new NotFoundException(`Document ${documentId} not found`);
+    if (!doc.cleanedOcrText) throw new BadRequestException("OCR not completed — wait for status ocr_done before triggering BOM extraction");
+
+    const assembly = await this.assemblyRepo.findById(assemblyId);
+    if (!assembly) throw new NotFoundException(`Assembly ${assemblyId} not found`);
+
+    await this.documentRepo.updateStatus(documentId, AiDocumentStatus.AI_PROCESSING);
+    this.logger.log(`BOM extraction triggered: document ${documentId} / assembly ${assemblyId}`);
+
+    // Fire-and-forget — erp-metal polls /status and receives callback on completion
+    this.runBomExtraction(documentId, doc.cleanedOcrText, assembly).catch(err =>
+      this.logger.error(`BOM extraction pipeline error for ${documentId}: ${err.message}`)
+    );
+
+    return { accepted: true, documentId, assemblyId };
+  }
+
+  private async runBomExtraction(documentId: string, ocrText: string, assembly: any): Promise<void> {
+    try {
+      const bom = await this.bomExtractor.extractForAssembly(documentId, ocrText, assembly);
+      await this.documentRepo.updateStatus(documentId, AiDocumentStatus.AI_DONE);
+
+      const items = bom ? await this.bomRepo.findItemsByBomId(bom.id).catch(() => []) : [];
+      await this.bomCallback.notify({
+        documentId,
+        assemblyId: assembly.id,
+        status: "completed",
+        items: items.map(i => ({
+          position: i.positionNumber,
+          name: i.name,
+          profileType: i.profileType,
+          steelGrade: i.steelGrade,
+          gost: i.gost,
+          lengthMm: i.lengthMm,
+          quantity: i.quantity,
+          unit: i.unit,
+          massTotalKg: i.massTotalKg,
+          confidence: i.confidence,
+        })),
+      });
+    } catch (err) {
+      this.logger.error(`BOM extraction failed for ${documentId}: ${(err as Error).message}`);
+      await this.documentRepo.updateStatus(documentId, AiDocumentStatus.AI_FAILED);
+      await this.bomCallback.notify({
+        documentId,
+        assemblyId: assembly.id,
+        status: "failed",
+        error: (err as Error).message,
+      });
+    }
   }
 
   private async startOcrProcessing(document: any) {

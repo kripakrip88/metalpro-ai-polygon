@@ -28,6 +28,7 @@ import { BomExtractionPromptBuilderService } from "./services/bom-extraction-pro
 import { AssemblyExtractorService } from "./services/assembly-extractor.service";
 import { BomExtractorService } from "./services/bom-extractor.service";
 import { HierarchicalExtractionOrchestratorService } from "./services/hierarchical-extraction-orchestrator.service";
+import { BomCallbackService } from "./services/bom-callback.service";
 import { ExtractedAssemblyRepository } from "./repositories/extracted-assembly.repository";
 import { ExtractedBomRepository } from "./repositories/extracted-bom.repository";
 import { ExtractedCoatingRepository } from "./repositories/extracted-coating.repository";
@@ -57,7 +58,7 @@ const UPLOAD_DEST = process.env.UPLOAD_DIR ?? "./uploads";
     // Stage 5 — hierarchical extraction
     AssemblyExtractionPromptBuilderService, BomExtractionPromptBuilderService,
     AssemblyExtractorService, BomExtractorService,
-    HierarchicalExtractionOrchestratorService,
+    HierarchicalExtractionOrchestratorService, BomCallbackService,
     ExtractedAssemblyRepository, ExtractedBomRepository,
     ExtractedCoatingRepository, ExtractedMaterialRepository,
   ],

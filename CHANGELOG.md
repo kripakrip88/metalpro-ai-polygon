@@ -24,6 +24,16 @@
 
 ---
 
+## 2026-05-29
+
+### metalpro-ai-polygon
+- [feat] GET /api/ai-bom/document/:id/status — статус документа для polling erp-metal (фазы: uploading→ocr→ocr_done→extracting→completed/error)
+- [feat] POST /api/ai-bom/document/:id/extract-assemblies — синхронное извлечение узлов из письма (3-8 сек, erp-metal ждёт ответ)
+- [feat] POST /api/ai-bom/document/:id/extract-bom — асинхронный запуск BOM extraction (возврат 202, callback в erp-metal POST /internal/bom-extracted по завершении)
+- [feat] BomCallbackService — webhook-уведомление erp-metal о завершении BOM extraction (completed/failed + items[])
+- [feat] DocumentRepository реализован через prisma.$queryRaw — все методы (create, findById, findByChecksum, findAll, updateStatus, saveOcrResult, markFailed, incrementRetry, resetForReprocess, updateLlamaStatus)
+- [fix] Весь OCR→AI pipeline теперь рабочий end-to-end (DocumentRepository больше не стаб)
+
 ## 2026-05-28
 
 ### metalpro-ai-polygon
