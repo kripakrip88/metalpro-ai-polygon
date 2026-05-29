@@ -16,28 +16,29 @@ RFQ
   └── ...
 ```
 
-BOM каждого узла (из чего он состоит) будет загружаться позже отдельным документом.
+BOM каждого узла (из чего он состоит) загружается позже отдельным документом.
 
 ---
 
-## Что уже готово в metalpro-ai-polygon
+## Готовый endpoint в metalpro-ai-polygon
 
-Сервис metalpro-ai-polygon запущен на том же сервере.
-URL сервиса хранится в env переменной `METALPRO_URL` (или `AI_POLYGON_URL` — проверить в .env).
+Сервис metalpro-ai-polygon уже реализован и задеплоен.
+URL: `http://erppark.ru:4000` (или из env переменной `METALPRO_URL` / `AI_POLYGON_URL`)
 
-### Endpoint для получения узлов из письма (синхронный, ~3-8 сек):
+### Единственный нужный endpoint:
 
 ```
-POST {METALPRO_URL}/api/ai-bom/document/{documentId}/extract-assemblies
+POST http://erppark.ru:4000/api/ai-bom/extract-assemblies-from-text
+Content-Type: application/json
+
+{ "text": "...тело письма целиком..." }
 ```
 
-**Ответ:**
+**Ответ (~3-8 сек):**
 ```json
 {
-  "documentId": "uuid",
   "assemblies": [
     {
-      "id": "uuid",
       "name": "Консоль кабельного короба К-1 6466/03.0028-Н-ИС-4",
       "designation": "6466/03.0028-Н-ИС-4",
       "quantity": 27,
@@ -45,79 +46,59 @@ POST {METALPRO_URL}/api/ai-bom/document/{documentId}/extract-assemblies
       "confidence": 0.95,
       "rawText": "Консоль кабельного короба К-1 6466/03.0028-Н-ИС-4  325-09Г2С-12  27 шт"
     },
-    ...
+    {
+      "name": "Консоль кабельного короба К-2 6466/03.0028-П-ИС-4",
+      "designation": "6466/03.0028-П-ИС-4",
+      "quantity": 4,
+      "unit": "шт.",
+      "confidence": 0.95,
+      "rawText": "..."
+    }
   ]
 }
 ```
 
-Если `assemblies` пустой — значит OCR ещё не завершён. Подождать и повторить.
-
-### Endpoint статуса документа (для polling):
-
-```
-GET {METALPRO_URL}/api/ai-bom/document/{documentId}/status
-```
-
-**Ответ:**
-```json
-{
-  "documentId": "uuid",
-  "status": "ocr_done",
-  "phase": "ocr_done",
-  "label": "OCR обработка",
-  "updatedAt": "2026-05-29T..."
-}
-```
-
-Фазы: `uploading` → `ocr` → `ocr_done` → `extracting` → `completed` | `error`
+Никакого upload, никакого documentId, никакого polling — просто текст письма → список узлов.
 
 ---
 
 ## Что нужно найти в erp-metal
 
-Найти код, который срабатывает при нажатии кнопки "КП из письма" (или "Create RFQ from email").
+Найти код, который срабатывает при нажатии кнопки "КП из письма".
 
-Скорее всего это:
-- API endpoint типа `POST /api/rfq/from-email` или `POST /api/quotes/from-email`
-- Или action в frontend, который вызывает backend
-- Ищи по ключевым словам: `fromEmail`, `from-email`, `createFromEmail`, `aiExtracted`, `rfq`, `quote`
+Искать по ключевым словам:
+- `fromEmail`, `from-email`, `createFromEmail`
+- `aiExtracted`
+- `rfq`, `quote`, `КП`
+- Скорее всего: `POST /api/rfq/from-email` или похожий endpoint
 
 ---
 
 ## Что именно изменить
 
-### Текущее поведение (что нужно убрать или изменить):
-Берёт `aiExtracted` из EmailMessage (JSONB поле) и создаёт строки как **материалы** в BOM.
+### Текущее поведение:
+Берёт `aiExtracted` из EmailMessage и создаёт строки как **материалы** в BOM.
 
 ### Новое поведение:
 
-1. **Найти documentId** — это UUID документа в metalpro-ai-polygon, связанного с этим письмом.
-   - Если связи нет — сначала загрузить текст письма в metalpro-ai-polygon через `POST /api/ai-bom/upload` или передать текст напрямую
-   - **Простой вариант**: если metalpro-ai-polygon не интегрирован с email — делать прямой вызов Claude API (см. "Простой вариант" ниже)
+```javascript
+// 1. Вызвать metalpro-ai-polygon с текстом письма
+const response = await fetch(`${process.env.METALPRO_URL}/api/ai-bom/extract-assemblies-from-text`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ text: email.bodyText }),
+});
+const { assemblies } = await response.json();
 
-2. **Вызвать extract-assemblies** и получить список узлов
-
-3. **Создать узлы (Assembly nodes) в RFQ**, а НЕ материалы:
-   - Для каждого элемента из `assemblies[]` создать узел
-   - Поле `name` → название узла
-   - Поле `designation` → обозначение (если есть)
-   - Поле `quantity` → количество узла в заказе
-   - BOM узла оставить пустым (заполнится позже)
-
----
-
-## Простой вариант (если нет documentId)
-
-Если metalpro-ai-polygon не хранит документы для писем, можно сделать проще:
-Передать текст письма напрямую через новый endpoint без предварительного upload:
-
+// 2. Для каждого assembly создать УЗЕЛ в RFQ, а не материал
+for (const assembly of assemblies) {
+  // создать node/assembly со следующими полями:
+  // name        ← assembly.name
+  // designation ← assembly.designation (если есть)
+  // quantity    ← assembly.quantity
+  // BOM узла    ← пустой (заполнится позже из PDF/Excel)
+}
 ```
-POST {METALPRO_URL}/api/ai-bom/extract-assemblies-from-text
-Body: { "text": "...тело письма..." }
-```
-
-**Этот endpoint нужно добавить в metalpro-ai-polygon** — он принимает текст напрямую,
-запускает AssemblyExtractorService и возвращает assemblies[] без сохранения в БД.
 
 ---
 
@@ -130,15 +111,7 @@ Body: { "text": "...тело письма..." }
 
 ---
 
-## Связанный репозиторий
-
-Сервис: **https://github.com/kripakrip88/metalpro-ai-polygon**
-Ветка с изменениями: `claude/extraction-pipeline-hierarchy-vj5ZJ`
-Staging: `http://erppark.ru:4000` (или проверить в docker-compose/env)
-
----
-
 ## Итог: что должно измениться для пользователя
 
-**До:** "КП из письма" → RFQ с плоским списком материалов (все "без матча")
-**После:** "КП из письма" → RFQ с узлами-заглушками, по одному на каждое изделие из письма
+**До:** "КП из письма" → RFQ → МАТЕРИАЛЫ (плоский список, все "без матча")
+**После:** "КП из письма" → RFQ → УЗЛЫ (один узел на каждое изделие из письма, BOM пустой)
