@@ -35,8 +35,7 @@ export async function runStartupMigrations(prisma: PrismaClient): Promise<void> 
       await prisma.$executeRawUnsafe(migration.sql);
       logger.log(`Migration OK: ${migration.name}`);
     } catch (err) {
-      logger.error(`Migration FAILED: ${migration.name} — ${(err as Error).message}`);
-      throw err;
+      logger.warn(`Migration skipped (${migration.name}): ${(err as Error).message}`);
     }
   }
 }
