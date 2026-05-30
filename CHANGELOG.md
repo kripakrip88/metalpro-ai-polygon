@@ -24,6 +24,18 @@
 
 ---
 
+## 2026-05-30 (Step C v2 — jobId)
+
+### metalpro-ai-polygon
+- [feat] BomExtractionJob Prisma model + migration 007_bom_extraction_jobs.sql — отдельная таблица для tracking upload-and-extract-bom jobs
+- [feat] BomExtractionJobRepository — create / findById / complete / fail через Prisma
+- [feat] POST /api/ai-bom/upload-and-extract-bom — теперь возвращает { jobId, status: "processing" } (было documentId)
+- [feat] GET /api/ai-bom/extraction-status/:jobId — polling endpoint: processing / completed { itemsCreated } / failed { error }
+- [feat] runAllContextualBomExtractions — подсчёт totalItems, обновляет job.status после завершения всех assemblies
+- [feat] runContextualBomExtraction — теперь возвращает number (count items) вместо void
+- [refactor] uploadAndExtractBom — extraction_context включает jobId для обратного маппинга
+- [feat] startup-migrations.ts — добавлена миграция 007 как belt-and-suspenders
+
 ## 2026-05-29 (Step C)
 
 ### metalpro-ai-polygon

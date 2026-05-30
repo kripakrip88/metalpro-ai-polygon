@@ -19,6 +19,7 @@ import { BomExtractorService } from "./bom-extractor.service";
 import { BomCallbackService } from "./bom-callback.service";
 import { ConfirmBomDto } from "../dto/confirm-bom.dto";
 import { AiDocumentStatus } from "../types/ai-document-status.enum";
+import { BomExtractionJobRepository } from "../repositories/bom-extraction-job.repository";
 
 const MAX_RETRY_COUNT = 3;
 const OCR_TERMINAL_STATUSES = new Set([
@@ -49,6 +50,7 @@ export class AiBomService {
     private readonly materialsRepo: MaterialsDictionaryRepository,
     private readonly assemblyRepo: ExtractedAssemblyRepository,
     private readonly bomRepo: ExtractedBomRepository,
+    private readonly jobRepo: BomExtractionJobRepository,
   ) {}
 
   async uploadDocument(file: Express.Multer.File) {
@@ -79,20 +81,47 @@ export class AiBomService {
     }
 
     const stored = this.storageService.resolveStoredFile(file);
+
+    // Create job record first — returns jobId to erp-metal immediately
+    const job = await this.jobRepo.create({
+      rfqId,
+      assemblies,
+      filePath: stored.storagePath,
+    });
+
     const existing = await this.documentRepo.findByChecksum(stored.sha256Checksum).catch(() => null);
     if (existing) {
-      return { documentId: existing.id, duplicate: true };
+      // File already processed — reuse document but still track via new job
+      this.logger.warn(`Duplicate file for job ${job.id}, reusing document ${existing.id}`);
+      const extractionContext = { rfqId, assemblies, jobId: job.id };
+      this.runAllContextualBomExtractions(existing.id, existing.cleanedOcrText ?? "", extractionContext).catch(
+        err => this.logger.error(`Duplicate-file contextual extraction failed: ${err.message}`)
+      );
+      return { jobId: job.id, status: "processing" };
     }
 
-    const extractionContext = { rfqId, assemblies };
+    const extractionContext = { rfqId, assemblies, jobId: job.id };
     const document = await this.documentRepo.create({
       ...stored,
       status: AiDocumentStatus.UPLOADED,
       extractionContext,
     });
-    this.logger.log(`BOM document saved: ${document.id} (rfqId=${rfqId}, assemblies=${assemblies.length})`);
+    this.logger.log(`BOM job ${job.id} created, document ${document.id} (rfqId=${rfqId}, assemblies=${assemblies.length})`);
     await this.startOcrProcessing(document);
-    return { documentId: document.id };
+    return { jobId: job.id, status: "processing" };
+  }
+
+  async getExtractionStatus(jobId: string) {
+    const job = await this.jobRepo.findById(jobId);
+    if (!job) throw new NotFoundException(`Job ${jobId} not found`);
+
+    if (job.status === "completed") {
+      return { status: "completed", itemsCreated: job.itemsCreated ?? 0 };
+    }
+    if (job.status === "failed") {
+      return { status: "failed", error: job.errorMessage ?? "Unknown error" };
+    }
+    return { status: "processing" };
   }
 
   async reprocessOcr(documentId: string, requestedBy?: string) {
@@ -138,6 +167,7 @@ export class AiBomService {
       const ctx = document.extractionContext as {
         rfqId: string;
         assemblies: Array<{ id: string; name: string; designation?: string }>;
+        jobId?: string;
       };
       this.runAllContextualBomExtractions(payload.documentId, cleanedOcrText, ctx).catch(err =>
         this.logger.error(`Contextual BOM extraction failed for ${payload.documentId}: ${err.message}`)
@@ -340,28 +370,43 @@ export class AiBomService {
   private async runAllContextualBomExtractions(
     documentId: string,
     ocrText: string,
-    ctx: { rfqId: string; assemblies: Array<{ id: string; name: string; designation?: string }> },
+    ctx: { rfqId: string; assemblies: Array<{ id: string; name: string; designation?: string }>; jobId?: string },
   ): Promise<void> {
-    await this.documentRepo.updateStatus(documentId, AiDocumentStatus.AI_PROCESSING);
+    if (documentId) await this.documentRepo.updateStatus(documentId, AiDocumentStatus.AI_PROCESSING);
+
+    let totalItems = 0;
+    let firstError: string | null = null;
 
     for (const erpAssembly of ctx.assemblies) {
       try {
-        await this.runContextualBomExtraction(documentId, ocrText, erpAssembly, ctx.rfqId);
+        const count = await this.runContextualBomExtraction(documentId, ocrText, erpAssembly, ctx.rfqId);
+        totalItems += count;
       } catch (err) {
-        this.logger.error(`Contextual BOM extraction failed for assembly ${erpAssembly.id}: ${(err as Error).message}`);
+        const msg = (err as Error).message;
+        this.logger.error(`Contextual BOM extraction failed for assembly ${erpAssembly.id}: ${msg}`);
+        if (!firstError) firstError = msg;
         await this.bomCallback.notify({
           documentId,
           assemblyId: erpAssembly.id,
           erpAssemblyId: erpAssembly.id,
           rfqId: ctx.rfqId,
           status: "failed",
-          error: (err as Error).message,
+          error: msg,
         });
       }
     }
 
-    await this.documentRepo.updateStatus(documentId, AiDocumentStatus.AI_DONE);
-    this.logger.log(`All contextual BOM extractions complete: ${documentId}`);
+    if (documentId) await this.documentRepo.updateStatus(documentId, AiDocumentStatus.AI_DONE);
+
+    if (ctx.jobId) {
+      if (firstError && totalItems === 0) {
+        await this.jobRepo.fail(ctx.jobId, firstError).catch(() => {});
+      } else {
+        await this.jobRepo.complete(ctx.jobId, totalItems).catch(() => {});
+      }
+    }
+
+    this.logger.log(`All contextual BOM extractions complete: ${documentId} | items=${totalItems} | job=${ctx.jobId ?? "none"}`);
   }
 
   private async runContextualBomExtraction(
@@ -369,7 +414,7 @@ export class AiBomService {
     ocrText: string,
     erpAssembly: { id: string; name: string; designation?: string },
     rfqId: string,
-  ): Promise<void> {
+  ): Promise<number> {
     const [savedAssembly] = await this.assemblyRepo.createMany([{
       documentId,
       name: erpAssembly.name,
@@ -403,7 +448,8 @@ export class AiBomService {
         confidence: i.confidence,
       })),
     });
-    this.logger.log(`Contextual BOM extracted: document ${documentId}, erpAssembly ${erpAssembly.id}`);
+    this.logger.log(`Contextual BOM extracted: document ${documentId}, erpAssembly ${erpAssembly.id}, items=${items.length}`);
+    return items.length;
   }
 
   private async startOcrProcessing(document: any) {

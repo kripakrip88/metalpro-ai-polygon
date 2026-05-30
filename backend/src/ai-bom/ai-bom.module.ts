@@ -33,6 +33,7 @@ import { ExtractedAssemblyRepository } from "./repositories/extracted-assembly.r
 import { ExtractedBomRepository } from "./repositories/extracted-bom.repository";
 import { ExtractedCoatingRepository } from "./repositories/extracted-coating.repository";
 import { ExtractedMaterialRepository } from "./repositories/extracted-material.repository";
+import { BomExtractionJobRepository } from "./repositories/bom-extraction-job.repository";
 
 const UPLOAD_DEST = process.env.UPLOAD_DIR ?? "./uploads";
 
@@ -61,6 +62,7 @@ const UPLOAD_DEST = process.env.UPLOAD_DIR ?? "./uploads";
     HierarchicalExtractionOrchestratorService, BomCallbackService,
     ExtractedAssemblyRepository, ExtractedBomRepository,
     ExtractedCoatingRepository, ExtractedMaterialRepository,
+    BomExtractionJobRepository,
   ],
   exports: [AiBomService],
 })

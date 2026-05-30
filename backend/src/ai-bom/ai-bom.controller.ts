@@ -63,6 +63,12 @@ export class AiBomController {
     return this.aiBomService.getDocumentStatus(id);
   }
 
+  // ── Job status polling (upload-and-extract-bom flow) ──────────────────
+  @Get("extraction-status/:jobId")
+  async getExtractionStatus(@Param("jobId", ParseUUIDPipe) jobId: string) {
+    return this.aiBomService.getExtractionStatus(jobId);
+  }
+
   // ── Stateless: erp-metal sends email text, gets nodes back (no upload needed) ─
   @Post("extract-assemblies-from-text")
   async extractAssembliesFromText(@Body("text") text: string) {

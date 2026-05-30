@@ -104,6 +104,20 @@ model ExtractedMaterial {
   @@map("extracted_material")
 }
 
+model BomExtractionJob {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  rfqId        String    @map("rfq_id")
+  assemblies   Json      @map("assemblies")
+  status       String    @default("processing")
+  filePath     String?   @map("file_path")
+  itemsCreated Int?      @map("items_created")
+  errorMessage String?   @map("error_message")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  completedAt  DateTime? @map("completed_at") @db.Timestamptz
+
+  @@map("bom_extraction_jobs")
+}
+
 model EmailMessage {
   id           String   @id @default(uuid())
   messageId    String   @unique
