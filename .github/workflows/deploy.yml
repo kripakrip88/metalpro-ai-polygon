@@ -1,0 +1,55 @@
+name: Deploy metalpro-ai-polygon
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          timeout: 300s
+          command_timeout: 300s
+          script: |
+            set -e
+
+            # Find the repo directory
+            REPO_DIR=""
+            for DIR in /opt/metalpro-ai-polygon /root/metalpro-ai-polygon /home/metalpro-ai-polygon; do
+              if [ -d "$DIR/.git" ]; then
+                REPO_DIR="$DIR"
+                break
+              fi
+            done
+
+            if [ -z "$REPO_DIR" ]; then
+              echo "ERROR: metalpro-ai-polygon directory not found"
+              exit 1
+            fi
+
+            echo "=== Repo: $REPO_DIR ==="
+            cd "$REPO_DIR"
+
+            echo "=== git pull ==="
+            git pull origin main
+
+            echo "=== docker-compose up --build ==="
+            docker-compose up --build -d
+
+            echo "=== Waiting for service to start ==="
+            sleep 10
+
+            echo "=== Health check ==="
+            curl -sf http://localhost:4000/health && echo "OK" || echo "Health check failed (service may still be starting)"
+
+            echo "=== Deploy complete ==="
