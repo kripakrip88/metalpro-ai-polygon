@@ -28,9 +28,10 @@ export class LlamaExtractionService {
     const inferResult = await this.llamaProvider.infer({ systemPrompt: built.systemPrompt, userPrompt: built.userPrompt, maxTokens: 4096, temperature: 0 });
 
     if (!inferResult.success) {
-      await repos.runRepo.markFailed(run.id, inferResult.error);
-      this.telemetry.apiCallFailed({ extractionRunId: run.id, documentId, modelProvider: "llama", errorType: inferResult.errorType, error: inferResult.error, durationMs: inferResult.durationMs });
-      this.logger.warn(`Llama failed (${inferResult.errorType}): ${documentId} — document status unchanged`);
+      const failed = inferResult as { success: false; error: string; errorType: string; durationMs: number };
+      await repos.runRepo.markFailed(run.id, failed.error);
+      this.telemetry.apiCallFailed({ extractionRunId: run.id, documentId, modelProvider: "llama", errorType: failed.errorType, error: failed.error, durationMs: failed.durationMs });
+      this.logger.warn(`Llama failed (${failed.errorType}): ${documentId} — document status unchanged`);
       return { extractionRunId: run.id, status: "failed", itemCount: 0, fragmentCount: 0 };
     }
 
