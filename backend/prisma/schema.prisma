@@ -8,6 +8,116 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model ExtractedCoating {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentId      String    @map("document_id") @db.Uuid
+  name            String
+  thicknessMicron Int?      @map("thickness_micron")
+  layers          Int?
+  areaM2          Decimal?  @map("area_m2") @db.Decimal(10, 4)
+  rawText         String    @map("raw_text")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  items ExtractedBomItem[]
+
+  @@map("extracted_coating")
+}
+
+model ExtractedAssembly {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentId      String   @map("document_id") @db.Uuid
+  name            String
+  designation     String?
+  quantity        Decimal  @default(1) @db.Decimal(10, 3)
+  unit            String   @default("шт.")
+  massKg          Decimal? @map("mass_kg") @db.Decimal(12, 4)
+  sourceHint      String   @map("source_hint")
+  sourceReference String?  @map("source_reference")
+  confidence      Decimal? @db.Decimal(5, 4)
+  rawText         String   @map("raw_text")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  boms ExtractedBom[]
+
+  @@index([documentId])
+  @@map("extracted_assembly")
+}
+
+model ExtractedBom {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  assemblyId       String   @map("assembly_id") @db.Uuid
+  sourceDocumentId String   @map("source_document_id") @db.Uuid
+  sourceHint       String   @map("source_hint")
+  sourceReference  String?  @map("source_reference")
+  extractionRunId  String?  @map("extraction_run_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  assembly ExtractedAssembly @relation(fields: [assemblyId], references: [id])
+  items    ExtractedBomItem[]
+
+  @@index([assemblyId])
+  @@map("extracted_bom")
+}
+
+model ExtractedBomItem {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bomId          String   @map("bom_id") @db.Uuid
+  positionNumber Int?     @map("position_number")
+  name           String
+  profileType    String   @default("other") @map("profile_type")
+  steelGrade     String?  @map("steel_grade")
+  gost           String?
+  lengthMm       Decimal? @map("length_mm") @db.Decimal(10, 2)
+  thicknessMm    Decimal? @map("thickness_mm") @db.Decimal(8, 3)
+  widthMm        Decimal? @map("width_mm") @db.Decimal(10, 2)
+  heightMm       Decimal? @map("height_mm") @db.Decimal(10, 2)
+  quantity       Decimal  @default(1) @db.Decimal(10, 3)
+  unit           String   @default("шт.")
+  massUnitKg     Decimal? @map("mass_unit_kg") @db.Decimal(10, 4)
+  massTotalKg    Decimal? @map("mass_total_kg") @db.Decimal(12, 4)
+  coatingId      String?  @map("coating_id") @db.Uuid
+  confidence     Decimal? @db.Decimal(5, 4)
+  rawText        String   @map("raw_text")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  bom      ExtractedBom      @relation(fields: [bomId], references: [id])
+  coating  ExtractedCoating? @relation(fields: [coatingId], references: [id])
+  material ExtractedMaterial?
+
+  @@index([bomId])
+  @@map("extracted_bom_item")
+}
+
+model ExtractedMaterial {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bomItemId       String   @unique @map("bom_item_id") @db.Uuid
+  erpMaterialId   String?  @map("erp_material_id")
+  matchedName     String   @map("matched_name")
+  matchConfidence Decimal  @default(0) @map("match_confidence") @db.Decimal(5, 4)
+  matchMethod     String   @default("ai_suggested") @map("match_method")
+  reviewedBy      String?  @map("reviewed_by")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  bomItem ExtractedBomItem @relation(fields: [bomItemId], references: [id])
+
+  @@index([erpMaterialId])
+  @@map("extracted_material")
+}
+
+model BomExtractionJob {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  rfqId        String    @map("rfq_id")
+  assemblies   Json      @map("assemblies")
+  status       String    @default("processing")
+  filePath     String?   @map("file_path")
+  itemsCreated Int?      @map("items_created")
+  errorMessage String?   @map("error_message")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  completedAt  DateTime? @map("completed_at") @db.Timestamptz
+
+  @@map("bom_extraction_jobs")
+}
+
 model EmailMessage {
   id           String   @id @default(uuid())
   messageId    String   @unique

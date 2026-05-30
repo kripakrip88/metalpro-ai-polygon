@@ -23,6 +23,17 @@ import { UnparsedFragmentRepository } from "./repositories/unparsed-fragment.rep
 import { MaterialsDictionaryRepository } from "./repositories/materials-dictionary.repository";
 import { CorrectionsRepository } from "./repositories/corrections.repository";
 import { SupplierRepository } from "./repositories/supplier.repository";
+import { AssemblyExtractionPromptBuilderService } from "./services/assembly-extraction-prompt-builder.service";
+import { BomExtractionPromptBuilderService } from "./services/bom-extraction-prompt-builder.service";
+import { AssemblyExtractorService } from "./services/assembly-extractor.service";
+import { BomExtractorService } from "./services/bom-extractor.service";
+import { HierarchicalExtractionOrchestratorService } from "./services/hierarchical-extraction-orchestrator.service";
+import { BomCallbackService } from "./services/bom-callback.service";
+import { ExtractedAssemblyRepository } from "./repositories/extracted-assembly.repository";
+import { ExtractedBomRepository } from "./repositories/extracted-bom.repository";
+import { ExtractedCoatingRepository } from "./repositories/extracted-coating.repository";
+import { ExtractedMaterialRepository } from "./repositories/extracted-material.repository";
+import { BomExtractionJobRepository } from "./repositories/bom-extraction-job.repository";
 
 const UPLOAD_DEST = process.env.UPLOAD_DIR ?? "./uploads";
 
@@ -45,6 +56,13 @@ const UPLOAD_DEST = process.env.UPLOAD_DIR ?? "./uploads";
     DocumentRepository, ExtractionResultRepository, ExtractionRunRepository,
     ExtractionItemRepository, UnparsedFragmentRepository,
     MaterialsDictionaryRepository, CorrectionsRepository, SupplierRepository,
+    // Stage 5 — hierarchical extraction
+    AssemblyExtractionPromptBuilderService, BomExtractionPromptBuilderService,
+    AssemblyExtractorService, BomExtractorService,
+    HierarchicalExtractionOrchestratorService, BomCallbackService,
+    ExtractedAssemblyRepository, ExtractedBomRepository,
+    ExtractedCoatingRepository, ExtractedMaterialRepository,
+    BomExtractionJobRepository,
   ],
   exports: [AiBomService],
 })

@@ -1,0 +1,51 @@
+name: Run DB Migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      migration_file:
+        description: 'Migration filename (e.g. 006_extraction_context.sql)'
+        required: true
+        default: '006_extraction_context.sql'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply migration via docker exec
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+
+            MIGRATION="${{ github.event.inputs.migration_file }}"
+            REPO_DIR="/opt/metalpro-ai-polygon"
+
+            echo "=== Running migration: $MIGRATION ==="
+
+            # Find postgres container name
+            PG_CONTAINER=$(docker ps --filter "name=postgres" --format "{{.Names}}" | head -1)
+
+            if [ -z "$PG_CONTAINER" ]; then
+              echo "ERROR: postgres container not found"
+              docker ps
+              exit 1
+            fi
+
+            echo "Postgres container: $PG_CONTAINER"
+
+            # Copy migration file into container
+            docker cp "$REPO_DIR/database/migrations/$MIGRATION" "$PG_CONTAINER:/tmp/$MIGRATION"
+
+            # Execute migration
+            docker exec "$PG_CONTAINER" psql -U metaluser -d metaldb -f "/tmp/$MIGRATION"
+
+            echo "=== Migration applied successfully ==="
