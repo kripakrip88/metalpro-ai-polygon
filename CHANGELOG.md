@@ -24,6 +24,14 @@
 
 ---
 
+## 2026-05-30 (deploy fixes)
+
+### metalpro-ai-polygon
+- [fix] startup-migrations.ts — больше не крашит приложение при ошибке миграции (`throw err` → `logger.warn`); app стартует всегда
+- [fix] main.ts — увеличен лимит body parser до 50MB (`json + urlencoded`); устранена ошибка HTTP 413 при загрузке файлов
+- [feat] GET /health — endpoint проверки работоспособности сервиса (`{ status: "ok", timestamp }`)
+- [config] .github/workflows/deploy.yml — GitHub Actions workflow для авто-деплоя через SSH при пуше в main
+
 ## 2026-05-30 (Step C v2 — jobId)
 
 ### metalpro-ai-polygon
