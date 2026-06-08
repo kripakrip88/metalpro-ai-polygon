@@ -1,0 +1,64 @@
+name: Server Audit
+
+on:
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Audit server via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          timeout: 120s
+          command_timeout: 120s
+          script: |
+            echo "=== DISK USAGE ==="
+            df -h /
+
+            echo ""
+            echo "=== TOP DIRECTORIES ==="
+            du -sh /opt/* /root/* /home/* /var/lib/docker 2>/dev/null | sort -rh | head -20
+
+            echo ""
+            echo "=== DOCKER DISK USAGE ==="
+            docker system df
+
+            echo ""
+            echo "=== RUNNING CONTAINERS ==="
+            docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
+
+            echo ""
+            echo "=== ALL DOCKER IMAGES ==="
+            docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}"
+
+            echo ""
+            echo "=== REPO STATUS ==="
+            REPO_DIR=""
+            for DIR in /opt/metalpro-ai-polygon /root/metalpro-ai-polygon /home/metalpro-ai-polygon; do
+              if [ -d "$DIR/.git" ]; then
+                REPO_DIR="$DIR"
+                break
+              fi
+            done
+
+            if [ -n "$REPO_DIR" ]; then
+              cd "$REPO_DIR"
+              echo "Repo path: $REPO_DIR"
+              echo "Current commit: $(git rev-parse HEAD)"
+              echo "Branch: $(git branch --show-current)"
+              echo ""
+              echo "=== GIT STATUS (uncommitted changes) ==="
+              git status --porcelain
+              echo ""
+              echo "=== EXTRA FILES (not in repo) ==="
+              git clean -nd
+            else
+              echo "ERROR: repo not found"
+            fi
+
+            echo ""
+            echo "=== AUDIT COMPLETE ==="
