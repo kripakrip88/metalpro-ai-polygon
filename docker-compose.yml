@@ -53,9 +53,7 @@ services:
     ports:
       - "5678:5678"
     environment:
-      - N8N_BASIC_AUTH_ACTIVE=true
-      - N8N_BASIC_AUTH_USER=admin
-      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD:-metaln8n}
+      - N8N_BASIC_AUTH_ACTIVE=false
       - DB_TYPE=postgresdb
       - DB_POSTGRESDB_HOST=postgres
       - DB_POSTGRESDB_PORT=5432
@@ -64,7 +62,13 @@ services:
       - DB_POSTGRESDB_PASSWORD=metalpass
       - DB_POSTGRESDB_SCHEMA=n8n
       - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-changeme-in-production}
-      - WEBHOOK_URL=http://localhost:5678
+      - WEBHOOK_URL=http://5.35.92.112:5678
+      - N8N_HOST=5.35.92.112
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - N8N_USER_MANAGEMENT_DISABLED=false
+      - N8N_EMAIL_MODE=
+      - N8N_PERSONALIZATION_ENABLED=false
     volumes:
       - n8n_data:/home/node/.n8n
     depends_on:
